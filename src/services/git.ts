@@ -59,14 +59,14 @@ export async function cloneAndGetCommits(
       corsProxy: CORS_PROXY,
       ref: repoInfo.branch,
       singleBranch: true,
-      depth: maxCommits + 1, // Shallow clone with enough history
+      depth: maxCommits + 1,
       onProgress: (event) => {
         if (event.total) {
           onProgress?.('Cloning...', event.loaded, event.total);
         }
       },
     });
-  } catch (err) {
+  } catch {
     // Try with 'master' if 'main' fails
     if (repoInfo.branch === 'main') {
       repoInfo.branch = 'master';
@@ -86,7 +86,7 @@ export async function cloneAndGetCommits(
         },
       });
     } else {
-      throw err;
+      throw new Error('Failed to clone repository');
     }
   }
 
@@ -102,15 +102,42 @@ export async function cloneAndGetCommits(
   const commits: Commit[] = [];
   const total = log.length;
 
-  // Process commits (oldest first)
+  // Process commits oldest first
   const reversedLog = [...log].reverse();
+
+  // Cache for tree files - key is tree OID, value is file map
+  const treeCache = new Map<string, Map<string, string>>();
+
+  // Pre-fetch all commit objects to get tree OIDs
+  onProgress?.('Reading trees...', 0, total);
+  const commitTrees: string[] = [];
+
+  for (let i = 0; i < reversedLog.length; i++) {
+    const { commit } = await git.readCommit({ fs: lfs, dir, oid: reversedLog[i].oid });
+    commitTrees.push(commit.tree);
+    if (i % 20 === 0) {
+      onProgress?.('Reading trees...', i, total);
+    }
+  }
+
+  // Build file changes incrementally
+  onProgress?.('Processing changes...', 0, total);
+
+  let previousTree = new Map<string, string>();
 
   for (let i = 0; i < reversedLog.length; i++) {
     const entry = reversedLog[i];
-    onProgress?.('Processing commits...', i + 1, total);
+    const treeOid = commitTrees[i];
 
-    // Get file changes by comparing trees
-    const files = await getCommitChanges(lfs, dir, entry.oid, i > 0 ? reversedLog[i - 1].oid : null);
+    // Get current tree (use cache if available)
+    let currentTree = treeCache.get(treeOid);
+    if (!currentTree) {
+      currentTree = await getTreeFiles(lfs, dir, treeOid);
+      treeCache.set(treeOid, currentTree);
+    }
+
+    // Compute changes
+    const files = diffTrees(previousTree, currentTree);
 
     commits.push({
       sha: entry.oid,
@@ -122,61 +149,40 @@ export async function cloneAndGetCommits(
       },
       files,
     });
+
+    // Update previous tree for next iteration
+    previousTree = currentTree;
+
+    if (i % 10 === 0) {
+      onProgress?.('Processing changes...', i + 1, total);
+    }
   }
 
+  onProgress?.('Done', total, total);
   return commits;
 }
 
-async function getCommitChanges(
-  fs: LightningFS,
-  dir: string,
-  commitOid: string,
-  parentOid: string | null
-): Promise<FileChange[]> {
+function diffTrees(
+  oldTree: Map<string, string>,
+  newTree: Map<string, string>
+): FileChange[] {
   const changes: FileChange[] = [];
 
-  try {
-    // Get the tree for current commit
-    const currentTree = await getTreeFiles(fs, dir, commitOid);
-
-    // Get the tree for parent commit (or empty if first commit)
-    const parentTree = parentOid
-      ? await getTreeFiles(fs, dir, parentOid)
-      : new Map<string, string>();
-
-    // Find added and modified files
-    for (const [path, oid] of currentTree) {
-      const parentOidForPath = parentTree.get(path);
-      if (!parentOidForPath) {
-        changes.push({
-          filename: path,
-          status: 'added',
-          additions: 0,
-          deletions: 0,
-        });
-      } else if (parentOidForPath !== oid) {
-        changes.push({
-          filename: path,
-          status: 'modified',
-          additions: 0,
-          deletions: 0,
-        });
-      }
+  // Find added and modified files
+  for (const [path, oid] of newTree) {
+    const oldOid = oldTree.get(path);
+    if (!oldOid) {
+      changes.push({ filename: path, status: 'added', additions: 0, deletions: 0 });
+    } else if (oldOid !== oid) {
+      changes.push({ filename: path, status: 'modified', additions: 0, deletions: 0 });
     }
+  }
 
-    // Find removed files
-    for (const [path] of parentTree) {
-      if (!currentTree.has(path)) {
-        changes.push({
-          filename: path,
-          status: 'removed',
-          additions: 0,
-          deletions: 0,
-        });
-      }
+  // Find removed files
+  for (const [path] of oldTree) {
+    if (!newTree.has(path)) {
+      changes.push({ filename: path, status: 'removed', additions: 0, deletions: 0 });
     }
-  } catch {
-    // If we can't get the tree, return empty changes
   }
 
   return changes;
@@ -185,15 +191,15 @@ async function getCommitChanges(
 async function getTreeFiles(
   fs: LightningFS,
   dir: string,
-  commitOid: string
+  treeOid: string
 ): Promise<Map<string, string>> {
   const files = new Map<string, string>();
 
-  try {
-    const { commit } = await git.readCommit({ fs, dir, oid: commitOid });
+  async function walkTree(oid: string, basePath: string): Promise<void> {
+    try {
+      const { tree } = await git.readTree({ fs, dir, oid });
 
-    async function walkTree(treeOid: string, basePath: string) {
-      const { tree } = await git.readTree({ fs, dir, oid: treeOid });
+      const subtrees: Promise<void>[] = [];
 
       for (const entry of tree) {
         const fullPath = basePath ? `${basePath}/${entry.path}` : entry.path;
@@ -201,16 +207,18 @@ async function getTreeFiles(
         if (entry.type === 'blob') {
           files.set(fullPath, entry.oid);
         } else if (entry.type === 'tree') {
-          await walkTree(entry.oid, fullPath);
+          // Walk subtrees in parallel
+          subtrees.push(walkTree(entry.oid, fullPath));
         }
       }
-    }
 
-    await walkTree(commit.tree, '');
-  } catch {
-    // Ignore errors
+      await Promise.all(subtrees);
+    } catch {
+      // Ignore tree read errors
+    }
   }
 
+  await walkTree(treeOid, '');
   return files;
 }
 
@@ -227,6 +235,5 @@ export async function fetchCommitsWithFiles(
 }
 
 export async function getDefaultBranch(repoInfo: RepoInfo): Promise<string> {
-  // We'll try main first, then master in cloneAndGetCommits
   return repoInfo.branch || 'main';
 }
