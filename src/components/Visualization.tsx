@@ -9,6 +9,8 @@ interface VisualizationProps {
   currentCommit: Commit | null;
   modifiedFiles: FileNode[];
   isPlaying: boolean;
+  onFileSelect?: (path: string) => void;
+  selectedFile?: string | null;
 }
 
 interface SimNode extends d3.SimulationNodeDatum {
@@ -32,10 +34,13 @@ export default function Visualization({
   currentCommit,
   modifiedFiles,
   isPlaying,
+  onFileSelect,
+  selectedFile,
 }: VisualizationProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   // Persistent refs for D3 elements
   const simulationRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
@@ -271,7 +276,32 @@ export default function Visualization({
     const enter = nodeSelection.enter()
       .append('g')
       .attr('class', 'node')
-      .attr('transform', d => `translate(${d.x ?? 0},${d.y ?? 0})`);
+      .attr('transform', d => `translate(${d.x ?? 0},${d.y ?? 0})`)
+      .style('cursor', d => d.type === 'file' ? 'pointer' : 'default');
+
+    // Add click handler for files
+    enter.filter(d => d.type === 'file')
+      .on('click', (event, d) => {
+        event.stopPropagation();
+        onFileSelect?.(d.path);
+      });
+
+    // Add hover handlers for tooltip
+    enter.on('mouseenter', function(event, d) {
+      if (d.type === 'file') {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect) {
+          setTooltip({
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top - 30,
+            text: d.path,
+          });
+        }
+      }
+    })
+    .on('mouseleave', () => {
+      setTooltip(null);
+    });
 
     enter.filter(d => d.type === 'directory')
       .append('circle')
@@ -295,10 +325,6 @@ export default function Visualization({
       .attr('font-size', '9px')
       .attr('font-family', 'monospace')
       .text(d => d.name.length > 12 ? d.name.slice(0, 10) + '..' : d.name);
-
-    enter.filter(d => d.type === 'file')
-      .append('title')
-      .text(d => d.path);
 
     // Cache selections
     nodeSelectionRef.current = nodeGroup.selectAll<SVGGElement, SimNode>('g.node');
@@ -327,7 +353,17 @@ export default function Visualization({
       renderGraph(); // Final render
     }, simDuration);
 
-  }, [fileTree, isPlaying, renderGraph]);
+  }, [fileTree, isPlaying, renderGraph, onFileSelect]);
+
+  // Update selected file highlighting
+  useEffect(() => {
+    if (!nodeSelectionRef.current) return;
+
+    nodeSelectionRef.current
+      .select('circle')
+      .attr('stroke-width', d => d.path === selectedFile ? 2.5 : (d.type === 'directory' ? 1 : 0.5))
+      .attr('stroke', d => d.path === selectedFile ? '#fff' : (d.type === 'directory' ? '#94a3b8' : '#1e293b'));
+  }, [selectedFile]);
 
   // Handle file modifications (highlight animations) - simplified
   useEffect(() => {
@@ -387,6 +423,17 @@ export default function Visualization({
           background: 'radial-gradient(ellipse at center, #1e293b 0%, #0f172a 100%)',
         }}
       />
+      {tooltip && (
+        <div
+          className="node-tooltip"
+          style={{
+            left: tooltip.x,
+            top: tooltip.y,
+          }}
+        >
+          {tooltip.text}
+        </div>
+      )}
     </div>
   );
 }

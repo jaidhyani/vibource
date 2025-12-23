@@ -239,12 +239,16 @@ export default function App() {
             currentCommit={currentCommit}
             modifiedFiles={modifiedFiles}
             isPlaying={isPlaying}
+            onFileSelect={handleFileSelect}
+            selectedFile={selectedFile}
           />
 
           {selectedFile && (
             <FileViewer
               filePath={selectedFile}
               currentCommit={currentCommit}
+              commits={commits}
+              currentCommitIndex={currentCommitIndex}
               onClose={() => setSelectedFile(null)}
             />
           )}

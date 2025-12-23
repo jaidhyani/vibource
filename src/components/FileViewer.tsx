@@ -6,6 +6,8 @@ import { readFileAtCommit, type FileContent } from '../services/git';
 interface FileViewerProps {
   filePath: string | null;
   currentCommit: Commit | null;
+  commits: Commit[];
+  currentCommitIndex: number;
   onClose: () => void;
 }
 
@@ -48,13 +50,38 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function FileViewer({ filePath, currentCommit, onClose }: FileViewerProps) {
+// Global cache shared across component instances
+const fileCache = new Map<string, FileContent>();
+const MAX_CACHE_SIZE = 1024;
+
+function addToCache(key: string, content: FileContent) {
+  fileCache.set(key, content);
+  // LRU eviction - remove oldest entries if over limit
+  if (fileCache.size > MAX_CACHE_SIZE) {
+    const keysToDelete = Array.from(fileCache.keys()).slice(0, fileCache.size - MAX_CACHE_SIZE);
+    keysToDelete.forEach(k => fileCache.delete(k));
+  }
+}
+
+export default function FileViewer({
+  filePath,
+  currentCommit,
+  commits,
+  currentCommitIndex,
+  onClose
+}: FileViewerProps) {
   const [fileContent, setFileContent] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const cacheRef = useRef<Map<string, FileContent>>(new Map());
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const prefetchAbortRef = useRef<AbortController | null>(null);
 
+  // Main effect for loading current file content
   useEffect(() => {
+    // Cancel any pending operations
+    abortControllerRef.current?.abort();
+    prefetchAbortRef.current?.abort();
+
     if (!filePath || !currentCommit) {
       setFileContent(null);
       setError(null);
@@ -64,7 +91,7 @@ export default function FileViewer({ filePath, currentCommit, onClose }: FileVie
     const cacheKey = `${currentCommit.sha}:${filePath}`;
 
     // Check cache first
-    const cached = cacheRef.current.get(cacheKey);
+    const cached = fileCache.get(cacheKey);
     if (cached) {
       setFileContent(cached);
       setError(null);
@@ -74,27 +101,79 @@ export default function FileViewer({ filePath, currentCommit, onClose }: FileVie
     setLoading(true);
     setError(null);
 
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     readFileAtCommit(currentCommit.sha, filePath)
       .then(content => {
+        if (abortController.signal.aborted) return;
         setLoading(false);
         if (content) {
-          // Cache the result
-          cacheRef.current.set(cacheKey, content);
-          // Limit cache size
-          if (cacheRef.current.size > 50) {
-            const firstKey = cacheRef.current.keys().next().value;
-            if (firstKey) cacheRef.current.delete(firstKey);
-          }
+          addToCache(cacheKey, content);
           setFileContent(content);
         } else {
           setError('File not found at this commit');
         }
       })
       .catch(() => {
+        if (abortController.signal.aborted) return;
         setLoading(false);
         setError('Failed to load file content');
       });
+
+    return () => {
+      abortController.abort();
+    };
   }, [filePath, currentCommit]);
+
+  // Prefetch effect - load next 5 versions of the file
+  useEffect(() => {
+    if (!filePath || currentCommitIndex < 0) return;
+
+    prefetchAbortRef.current?.abort();
+    const abortController = new AbortController();
+    prefetchAbortRef.current = abortController;
+
+    // Prefetch next 5 commits that might contain this file
+    const prefetchCommits: Commit[] = [];
+    for (let i = currentCommitIndex + 1; i < commits.length && prefetchCommits.length < 5; i++) {
+      prefetchCommits.push(commits[i]);
+    }
+
+    // Also prefetch previous 2 commits
+    for (let i = currentCommitIndex - 1; i >= 0 && prefetchCommits.length < 7; i--) {
+      prefetchCommits.push(commits[i]);
+    }
+
+    // Prefetch in background
+    const prefetch = async () => {
+      for (const commit of prefetchCommits) {
+        if (abortController.signal.aborted) break;
+
+        const cacheKey = `${commit.sha}:${filePath}`;
+        if (fileCache.has(cacheKey)) continue;
+
+        try {
+          const content = await readFileAtCommit(commit.sha, filePath);
+          if (abortController.signal.aborted) break;
+          if (content) {
+            addToCache(cacheKey, content);
+          }
+        } catch {
+          // Ignore prefetch errors
+        }
+
+        // Small delay between prefetches to not block main thread
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    };
+
+    prefetch();
+
+    return () => {
+      abortController.abort();
+    };
+  }, [filePath, currentCommitIndex, commits]);
 
   if (!filePath) return null;
 
