@@ -6,7 +6,9 @@ import Visualization from './components/Visualization';
 import Controls from './components/Controls';
 import RepoInput from './components/RepoInput';
 import StatsPanel from './components/StatsPanel';
-import { Info, X } from 'lucide-react';
+import CommitSidebar from './components/CommitSidebar';
+import FileViewer from './components/FileViewer';
+import { Info, X, PanelRightOpen, PanelRightClose } from 'lucide-react';
 import './App.css';
 
 type AppState = 'input' | 'loading' | 'visualizing';
@@ -24,6 +26,8 @@ export default function App() {
   const [loadingProgress, setLoadingProgress] = useState<{ phase: string; loaded: number; total: number | null }>({ phase: '', loaded: 0, total: null });
   const [error, setError] = useState<string | null>(null);
   const [showStats, setShowStats] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
   const playIntervalRef = useRef<number | null>(null);
   const treeRef = useRef<FileNode>(createFileTree());
@@ -69,6 +73,7 @@ export default function App() {
       setFileTree(createFileTree());
       setAuthors(new Map());
       setModifiedFiles([]);
+      setSelectedFile(null);
       setAppState('visualizing');
       setIsPlaying(false);
     } catch (err) {
@@ -161,6 +166,12 @@ export default function App() {
     setIsPlaying(false);
     setError(null);
     setShowStats(false);
+    setSelectedFile(null);
+  }, []);
+
+  // Handle file selection
+  const handleFileSelect = useCallback((path: string) => {
+    setSelectedFile(prev => prev === path ? null : path);
   }, []);
 
   // Start playback automatically when visualization is ready
@@ -202,23 +213,51 @@ export default function App() {
             <span className="branch-badge">{repoInfo.branch}</span>
           </button>
         )}
-        <button
-          onClick={() => setShowStats(!showStats)}
-          className={`info-btn ${showStats ? 'active' : ''}`}
-          title="Toggle stats panel"
-        >
-          {showStats ? <X size={20} /> : <Info size={20} />}
-        </button>
+        <div className="header-actions">
+          <button
+            onClick={() => setShowSidebar(!showSidebar)}
+            className={`icon-btn ${showSidebar ? 'active' : ''}`}
+            title="Toggle commit sidebar"
+          >
+            {showSidebar ? <PanelRightClose size={20} /> : <PanelRightOpen size={20} />}
+          </button>
+          <button
+            onClick={() => setShowStats(!showStats)}
+            className={`icon-btn ${showStats ? 'active' : ''}`}
+            title="Toggle stats panel"
+          >
+            {showStats ? <X size={20} /> : <Info size={20} />}
+          </button>
+        </div>
       </header>
 
       <main className="app-main">
-        <Visualization
-          fileTree={fileTree}
-          authors={authors}
-          currentCommit={currentCommit}
-          modifiedFiles={modifiedFiles}
-          isPlaying={isPlaying}
-        />
+        <div className="main-content">
+          <Visualization
+            fileTree={fileTree}
+            authors={authors}
+            currentCommit={currentCommit}
+            modifiedFiles={modifiedFiles}
+            isPlaying={isPlaying}
+          />
+
+          {selectedFile && (
+            <FileViewer
+              filePath={selectedFile}
+              currentCommit={currentCommit}
+              onClose={() => setSelectedFile(null)}
+            />
+          )}
+        </div>
+
+        {showSidebar && (
+          <CommitSidebar
+            currentCommit={currentCommit}
+            modifiedFiles={modifiedFiles}
+            onFileSelect={handleFileSelect}
+            selectedFile={selectedFile}
+          />
+        )}
 
         {showStats && repoInfo && (
           <StatsPanel

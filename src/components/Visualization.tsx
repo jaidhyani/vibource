@@ -50,6 +50,49 @@ export default function Visualization({
   // Track simulation stop timeout
   const simStopTimeoutRef = useRef<number | null>(null);
 
+  // Render function - updates DOM immediately (defined early for use in effects)
+  const renderGraph = useCallback(() => {
+    const nodeSelection = nodeSelectionRef.current;
+    const linkSelection = linkSelectionRef.current;
+
+    if (linkSelection) {
+      linkSelection
+        .attr('x1', d => (d.source as SimNode).x!)
+        .attr('y1', d => (d.source as SimNode).y!)
+        .attr('x2', d => (d.target as SimNode).x!)
+        .attr('y2', d => (d.target as SimNode).y!);
+    }
+
+    if (nodeSelection) {
+      nodeSelection.attr('transform', d => `translate(${d.x},${d.y})`);
+    }
+  }, []);
+
+  // Handle visibility change - clean up when tab hidden, restore when visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab hidden - stop simulation and cancel pending work
+        simulationRef.current?.stop();
+        if (simStopTimeoutRef.current) {
+          clearTimeout(simStopTimeoutRef.current);
+          simStopTimeoutRef.current = null;
+        }
+      } else {
+        // Tab visible - clean up stale elements and re-render
+        if (gRef.current) {
+          // Remove all author badges (they may be in weird states)
+          gRef.current.select('g.authors').selectAll('*').remove();
+          // Re-render current state
+          renderGraph();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [renderGraph]);
+
   // Handle resize with debounce
   useEffect(() => {
     let timeoutId: number;
@@ -115,24 +158,6 @@ export default function Visualization({
       if (simStopTimeoutRef.current) clearTimeout(simStopTimeoutRef.current);
     };
   }, [dimensions]);
-
-  // Render function - updates DOM immediately
-  const renderGraph = useCallback(() => {
-    const nodeSelection = nodeSelectionRef.current;
-    const linkSelection = linkSelectionRef.current;
-
-    if (linkSelection) {
-      linkSelection
-        .attr('x1', d => (d.source as SimNode).x!)
-        .attr('y1', d => (d.source as SimNode).y!)
-        .attr('x2', d => (d.target as SimNode).x!)
-        .attr('y2', d => (d.target as SimNode).y!);
-    }
-
-    if (nodeSelection) {
-      nodeSelection.attr('transform', d => `translate(${d.x},${d.y})`);
-    }
-  }, []);
 
   // Update graph when fileTree changes
   useEffect(() => {
@@ -362,16 +387,6 @@ export default function Visualization({
           background: 'radial-gradient(ellipse at center, #1e293b 0%, #0f172a 100%)',
         }}
       />
-      {currentCommit && (
-        <div className="commit-info">
-          <div className="commit-message">
-            {currentCommit.message.split('\n')[0]}
-          </div>
-          <div className="commit-author">
-            {currentCommit.author.name}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
