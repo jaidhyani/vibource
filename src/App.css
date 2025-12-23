@@ -1678,6 +1678,19 @@
 }
 
 /* ========== RESPONSIVE ========== */
+
+/* Large tablets / small laptops */
+@media (max-width: 1024px) {
+  .stats-panel {
+    width: 300px;
+  }
+
+  .commit-sidebar {
+    width: 320px;
+  }
+}
+
+/* Tablets and large phones landscape */
 @media (max-width: 768px) {
   .repo-input-card {
     padding: 24px;
@@ -1687,21 +1700,292 @@
     font-size: 2rem;
   }
 
-  .controls-main {
-    flex-wrap: wrap;
+  .stats-panel {
+    width: 100%;
+    max-width: none;
+    right: 8px;
+    left: 8px;
+    top: 56px;
   }
 
-  .timeline-container {
-    flex-wrap: wrap;
+  /* Header adjustments */
+  .app-header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .header-logo {
+    padding: 6px 10px;
+  }
+
+  .logo-text {
+    font-size: 1rem;
+  }
+
+  .repo-badge {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    max-width: 150px;
+  }
+
+  .branch-badge {
+    display: none;
+  }
+
+  .header-actions {
+    gap: 4px;
+  }
+
+  .sidebar-toggle-label,
+  .file-panel-btn-label {
+    display: none;
+  }
+
+  .sidebar-toggle-btn,
+  .file-panel-btn {
+    padding: 8px;
+  }
+
+  /* Controls section - stacked layout */
+  .controls {
+    padding: 12px 16px;
+  }
+
+  .controls-main {
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .controls-buttons {
+    order: 1;
+  }
+
+  .speed-control {
+    order: 2;
+    width: 100%;
     justify-content: center;
+    padding: 6px 12px;
+  }
+
+  .speed-slider-container {
+    flex: 1;
+    max-width: 180px;
+  }
+
+  /* Timeline - full width and stacked */
+  .timeline-container {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .timeline-info {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-width: auto;
+    order: 1;
   }
 
   .timeline-slider {
-    order: 3;
     width: 100%;
+    order: 2;
+    height: 14px;
+  }
+
+  .timeline-slider input[type="range"] {
+    height: 14px;
+  }
+
+  .timeline-slider input[type="range"]::-webkit-slider-thumb {
+    width: 28px;
+    height: 28px;
+  }
+
+  .timeline-slider input[type="range"]::-moz-range-thumb {
+    width: 28px;
+    height: 28px;
+  }
+
+  .slider-progress {
+    height: 14px;
+  }
+
+  .timeline-commits {
+    order: 3;
+    min-width: auto;
+    justify-content: center;
+  }
+}
+
+/* Standard phones - iPhone 15 Pro Max (430px), Pixel 8 (412px), Galaxy S24 (360px) */
+@media (max-width: 480px) {
+  .app-header {
+    padding: 6px 10px;
+  }
+
+  .repo-badge {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .controls {
+    padding: 10px 12px;
+  }
+
+  .controls-main {
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .speed-slider-container {
+    max-width: 140px;
+  }
+
+  .speed-value {
+    font-size: 0.9rem;
+  }
+
+  .speed-display {
+    min-width: 75px;
+  }
+
+  .speed-unit {
+    font-size: 0.7rem;
+  }
+
+  .timeline-container {
+    gap: 8px;
+  }
+
+  .timeline-date {
+    font-size: 0.85rem;
+  }
+
+  .timeline-time {
+    font-size: 0.75rem;
+  }
+
+  /* Larger touch targets for mobile */
+  .timeline-slider {
+    height: 18px;
+  }
+
+  .timeline-slider input[type="range"] {
+    height: 18px;
+  }
+
+  .timeline-slider input[type="range"]::-webkit-slider-thumb {
+    width: 34px;
+    height: 34px;
+    border-width: 2px;
+  }
+
+  .timeline-slider input[type="range"]::-moz-range-thumb {
+    width: 34px;
+    height: 34px;
+  }
+
+  .slider-progress {
+    height: 18px;
+  }
+
+  .timeline-commits span:first-child {
+    font-size: 1rem;
+  }
+
+  .timeline-commits span:nth-child(3) {
+    font-size: 0.85rem;
+  }
+
+  .timeline-commits .label {
+    font-size: 0.75rem;
+  }
+
+  .commit-sidebar {
+    width: 85vw;
+    max-width: 320px;
+  }
+}
+
+/* Smaller phones - iPhone SE (375px), compact Androids (360px) */
+@media (max-width: 390px) {
+  .repo-badge {
+    display: none;
+  }
+
+  .controls {
+    padding: 8px 10px;
+  }
+
+  .control-btn {
+    width: 42px;
+    height: 42px;
+  }
+
+  .control-btn.play-btn {
+    width: 50px;
+    height: 50px;
+  }
+
+  .speed-control {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+
+  .speed-slider-container {
+    max-width: 110px;
+  }
+
+  .timeline-info {
+    gap: 6px;
+  }
+
+  .timeline-date {
+    font-size: 0.8rem;
+  }
+
+  .timeline-time {
+    font-size: 0.7rem;
+  }
+
+  .timeline-slider {
+    height: 20px;
+  }
+
+  .timeline-slider input[type="range"] {
+    height: 20px;
+  }
+
+  .timeline-slider input[type="range"]::-webkit-slider-thumb {
+    width: 38px;
+    height: 38px;
+  }
+
+  .timeline-slider input[type="range"]::-moz-range-thumb {
+    width: 38px;
+    height: 38px;
+  }
+
+  .slider-progress {
+    height: 20px;
+  }
+
+  .timeline-commits {
+    gap: 3px;
+  }
+
+  .timeline-commits span:first-child {
+    font-size: 0.95rem;
+  }
+
+  .commit-sidebar {
+    width: 90vw;
   }
 
   .stats-panel {
-    width: 100%;
+    left: 4px;
+    right: 4px;
   }
 }
