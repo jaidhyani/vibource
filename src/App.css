@@ -131,6 +131,48 @@
   cursor: not-allowed;
 }
 
+/* File panel toggle button */
+.file-panel-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  font-size: 0.8125rem;
+  transition: all 0.15s;
+}
+
+.file-panel-btn:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.file-panel-btn.active {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.file-panel-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.file-panel-btn.has-file {
+  animation: pulseOnce 0.6s ease-out;
+}
+
+.file-panel-btn-label {
+  font-weight: 500;
+}
+
+@keyframes pulseOnce {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); box-shadow: 0 0 12px var(--accent-primary); }
+  100% { transform: scale(1); }
+}
+
 /* Loading fallback for lazy components */
 .loading-fallback {
   display: flex;
