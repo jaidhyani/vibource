@@ -292,8 +292,9 @@ export default function Visualization({
         onFileSelect?.(d.path);
       });
 
-    // Add hover handlers for tooltip
+    // Add hover handlers for tooltip and node enlargement
     enter.on('mouseenter', function(event, d) {
+      // Show tooltip for files
       if (d.type === 'file') {
         const rect = containerRef.current?.getBoundingClientRect();
         if (rect) {
@@ -304,11 +305,33 @@ export default function Visualization({
           });
         }
       }
+
+      // Enlarge node on hover
+      const node = d3.select(this);
+      const circle = node.select('circle');
+      const currentR = parseFloat(circle.attr('r')) || 4;
+      const enlargedR = currentR * 1.8;
+
+      circle.transition()
+        .duration(100)
+        .attr('r', enlargedR)
+        .attr('stroke-width', d.type === 'directory' ? 2 : 1.5);
     })
-    .on('mouseleave', () => {
+    .on('mouseleave', function(_, d) {
       setTooltip(null);
+
+      // Restore original node size
+      const node = d3.select(this);
+      const circle = node.select('circle');
+      const originalR = d.type === 'directory' ? (d.id === 'root' ? 12 : 8) : 4;
+
+      circle.transition()
+        .duration(100)
+        .attr('r', originalR)
+        .attr('stroke-width', d.type === 'directory' ? 1 : 0.5);
     });
 
+    // Directory nodes
     enter.filter(d => d.type === 'directory')
       .append('circle')
       .attr('r', d => d.id === 'root' ? 12 : 8)
@@ -316,6 +339,7 @@ export default function Visualization({
       .attr('stroke', '#94a3b8')
       .attr('stroke-width', 1);
 
+    // File nodes
     enter.filter(d => d.type === 'file')
       .append('circle')
       .attr('r', 4)
@@ -323,14 +347,36 @@ export default function Visualization({
       .attr('stroke', '#1e293b')
       .attr('stroke-width', 0.5);
 
-    enter.filter(d => d.type === 'directory' && d.id !== 'root')
-      .append('text')
-      .attr('dx', 12)
-      .attr('dy', 3)
-      .attr('fill', '#94a3b8')
-      .attr('font-size', '9px')
-      .attr('font-family', 'monospace')
-      .text(d => d.name.length > 12 ? d.name.slice(0, 10) + '..' : d.name);
+    // Directory labels - improved readability
+    const dirLabels = enter.filter(d => d.type === 'directory' && d.id !== 'root');
+
+    // Add background rect for better contrast
+    dirLabels.append('rect')
+      .attr('class', 'label-bg')
+      .attr('x', 10)
+      .attr('y', -7)
+      .attr('rx', 3)
+      .attr('ry', 3)
+      .attr('fill', 'rgba(15, 23, 42, 0.85)')
+      .attr('stroke', 'rgba(148, 163, 184, 0.3)')
+      .attr('stroke-width', 0.5);
+
+    dirLabels.append('text')
+      .attr('dx', 14)
+      .attr('dy', 4)
+      .attr('fill', '#e2e8f0')
+      .attr('font-size', '11px')
+      .attr('font-family', "'SF Mono', Monaco, monospace")
+      .attr('font-weight', '500')
+      .text(d => d.name.length > 15 ? d.name.slice(0, 13) + '..' : d.name)
+      .each(function() {
+        // Size the background rect to fit the text
+        const parentEl = d3.select(this.parentNode as Element);
+        const bbox = (this as SVGTextElement).getBBox();
+        parentEl.select('.label-bg')
+          .attr('width', bbox.width + 8)
+          .attr('height', bbox.height + 4);
+      });
 
     // Cache selections
     nodeSelectionRef.current = nodeGroup.selectAll<SVGGElement, SimNode>('g.node');

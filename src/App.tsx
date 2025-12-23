@@ -1,19 +1,57 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import type { FileNode, Author, Commit, RepoInfo } from './types';
 import { parseRepoUrl, fetchCommitsWithFiles } from './services/git';
 import { createFileTree, applyCommitToTree } from './utils/fileTree';
-import Visualization from './components/Visualization';
 import Controls from './components/Controls';
 import RepoInput from './components/RepoInput';
-import StatsPanel from './components/StatsPanel';
-import CommitSidebar from './components/CommitSidebar';
-import FileViewer from './components/FileViewer';
-import { Info, X, PanelRightOpen, PanelRightClose } from 'lucide-react';
+import { Info, X, PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
 import './App.css';
+
+// Lazy load heavy components for code splitting
+const Visualization = lazy(() => import('./components/Visualization'));
+const StatsPanel = lazy(() => import('./components/StatsPanel'));
+const CommitSidebar = lazy(() => import('./components/CommitSidebar'));
+const FileViewer = lazy(() => import('./components/FileViewer'));
+
+// Loading fallback component
+function LoadingFallback() {
+  return (
+    <div className="loading-fallback">
+      <div className="loading-spinner" />
+    </div>
+  );
+}
 
 type AppState = 'input' | 'loading' | 'visualizing';
 
+// URL state utilities
+function getUrlParams(): { repo?: string; branch?: string; commits?: number; at?: number } {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    repo: params.get('repo') || undefined,
+    branch: params.get('branch') || undefined,
+    commits: params.get('commits') ? parseInt(params.get('commits')!, 10) : undefined,
+    at: params.get('at') ? parseInt(params.get('at')!, 10) : undefined,
+  };
+}
+
+function updateUrlParams(params: { repo?: string; branch?: string; commits?: number; at?: number }) {
+  const url = new URL(window.location.href);
+  if (params.repo) url.searchParams.set('repo', params.repo);
+  else url.searchParams.delete('repo');
+  if (params.branch) url.searchParams.set('branch', params.branch);
+  else url.searchParams.delete('branch');
+  if (params.commits) url.searchParams.set('commits', String(params.commits));
+  else url.searchParams.delete('commits');
+  if (params.at !== undefined && params.at >= 0) url.searchParams.set('at', String(params.at));
+  else url.searchParams.delete('at');
+  window.history.replaceState({}, '', url.toString());
+}
+
 export default function App() {
+  // Parse initial URL params
+  const [urlParams] = useState(getUrlParams);
+
   const [appState, setAppState] = useState<AppState>('input');
   const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
   const [commits, setCommits] = useState<Commit[]>([]);
@@ -27,6 +65,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [showStats, setShowStats] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [showFilePanel, setShowFilePanel] = useState(true);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
   const playIntervalRef = useRef<number | null>(null);
@@ -208,21 +247,60 @@ export default function App() {
     if (appState === 'visualizing' && currentCommitIndex === -1 && commits.length > 0) {
       // Small delay before starting
       const timeout = setTimeout(() => {
-        // Apply first commit
-        const commit = commitsRef.current[0];
-        if (commit) {
-          const modified = applyCommitToTree(treeRef.current, commit, authorsRef.current);
+        // Check if URL has a specific commit to jump to
+        const targetIndex = urlParams.at !== undefined ? Math.min(urlParams.at, commits.length - 1) : 0;
+
+        if (targetIndex > 0) {
+          // Seek to the target commit
+          for (let i = 0; i <= targetIndex; i++) {
+            applyCommitToTree(treeRef.current, commitsRef.current[i], authorsRef.current);
+          }
           setFileTree({ ...treeRef.current });
           setAuthors(new Map(authorsRef.current));
-          setModifiedFiles(modified);
-          setCurrentCommitIndex(0);
+          setCurrentCommitIndex(targetIndex);
+          setModifiedFiles([]);
+          setIsPlaying(false); // Don't autoplay when seeking to specific commit
+        } else {
+          // Apply first commit
+          const commit = commitsRef.current[0];
+          if (commit) {
+            const modified = applyCommitToTree(treeRef.current, commit, authorsRef.current);
+            setFileTree({ ...treeRef.current });
+            setAuthors(new Map(authorsRef.current));
+            setModifiedFiles(modified);
+            setCurrentCommitIndex(0);
+          }
+          setIsPlaying(true);
         }
-        setIsPlaying(true);
       }, 500);
 
       return () => clearTimeout(timeout);
     }
-  }, [appState, currentCommitIndex, commits.length]);
+  }, [appState, currentCommitIndex, commits.length, urlParams.at]);
+
+  // Update URL when state changes
+  useEffect(() => {
+    if (repoInfo && appState === 'visualizing') {
+      updateUrlParams({
+        repo: `${repoInfo.owner}/${repoInfo.repo}`,
+        branch: repoInfo.branch !== 'main' ? repoInfo.branch : undefined,
+        commits: commits.length !== 1000 ? commits.length : undefined,
+        at: currentCommitIndex > 0 ? currentCommitIndex : undefined,
+      });
+    } else if (appState === 'input') {
+      // Clear URL params when going back to input
+      updateUrlParams({});
+    }
+  }, [repoInfo, appState, currentCommitIndex, commits.length]);
+
+  // Auto-load from URL params on mount
+  useEffect(() => {
+    if (urlParams.repo && appState === 'input') {
+      handleRepoSubmit(urlParams.repo, urlParams.branch, urlParams.commits);
+    }
+  // Only run on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const currentCommit = currentCommitIndex >= 0 ? commits[currentCommitIndex] : null;
   const currentDate = currentCommit ? new Date(currentCommit.author.date) : null;
@@ -234,6 +312,9 @@ export default function App() {
         isLoading={appState === 'loading'}
         loadingProgress={loadingProgress}
         error={error}
+        initialRepo={urlParams.repo}
+        initialBranch={urlParams.branch}
+        initialCommitCount={urlParams.commits}
       />
     );
   }
@@ -252,6 +333,14 @@ export default function App() {
         )}
         <div className="header-actions">
           <button
+            onClick={() => setShowFilePanel(!showFilePanel)}
+            className={`icon-btn ${showFilePanel && selectedFile ? 'active' : ''}`}
+            title="Toggle file panel"
+            disabled={!selectedFile}
+          >
+            {showFilePanel ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
+          </button>
+          <button
             onClick={() => setShowSidebar(!showSidebar)}
             className={`icon-btn ${showSidebar ? 'active' : ''}`}
             title="Toggle commit sidebar"
@@ -269,45 +358,54 @@ export default function App() {
       </header>
 
       <main className="app-main">
-        <div className="main-content">
-          <Visualization
-            fileTree={fileTree}
-            authors={authors}
-            currentCommit={currentCommit}
-            modifiedFiles={modifiedFiles}
-            onFileSelect={handleFileSelect}
-            selectedFile={selectedFile}
-          />
-
-          {selectedFile && (
+        {selectedFile && showFilePanel && (
+          <Suspense fallback={<LoadingFallback />}>
             <FileViewer
               filePath={selectedFile}
               currentCommit={currentCommit}
               commits={commits}
               currentCommitIndex={currentCommitIndex}
               onClose={() => setSelectedFile(null)}
+              onSeekToCommit={handleSeek}
             />
-          )}
+          </Suspense>
+        )}
+
+        <div className="main-content">
+          <Suspense fallback={<LoadingFallback />}>
+            <Visualization
+              fileTree={fileTree}
+              authors={authors}
+              currentCommit={currentCommit}
+              modifiedFiles={modifiedFiles}
+              onFileSelect={handleFileSelect}
+              selectedFile={selectedFile}
+            />
+          </Suspense>
         </div>
 
         {showSidebar && (
-          <CommitSidebar
-            currentCommit={currentCommit}
-            modifiedFiles={modifiedFiles}
-            onFileSelect={handleFileSelect}
-            selectedFile={selectedFile}
-          />
+          <Suspense fallback={<LoadingFallback />}>
+            <CommitSidebar
+              currentCommit={currentCommit}
+              modifiedFiles={modifiedFiles}
+              onFileSelect={handleFileSelect}
+              selectedFile={selectedFile}
+            />
+          </Suspense>
         )}
 
         {showStats && repoInfo && (
-          <StatsPanel
-            repoInfo={repoInfo}
-            fileTree={fileTree}
-            authors={authors}
-            commits={commits}
-            currentCommitIndex={currentCommitIndex}
-            onClose={() => setShowStats(false)}
-          />
+          <Suspense fallback={<LoadingFallback />}>
+            <StatsPanel
+              repoInfo={repoInfo}
+              fileTree={fileTree}
+              authors={authors}
+              commits={commits}
+              currentCommitIndex={currentCommitIndex}
+              onClose={() => setShowStats(false)}
+            />
+          </Suspense>
         )}
       </main>
 

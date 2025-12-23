@@ -126,6 +126,22 @@
   color: white;
 }
 
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Loading fallback for lazy components */
+.loading-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+  background: var(--bg-secondary);
+}
+
 /* ========== COMMIT SIDEBAR ========== */
 .commit-sidebar {
   width: 320px;
@@ -295,18 +311,20 @@
 
 /* ========== FILE VIEWER ========== */
 .file-viewer {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 40%;
-  min-height: 200px;
-  max-height: 60%;
   background: var(--bg-secondary);
-  border-top: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   z-index: 50;
+}
+
+/* Left side panel variant */
+.file-viewer-left {
+  width: 400px;
+  min-width: 300px;
+  max-width: 50%;
+  height: 100%;
+  border-right: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .file-viewer-header {
@@ -323,11 +341,16 @@
   align-items: center;
   gap: 8px;
   color: var(--text-primary);
+  min-width: 0;
+  flex: 1;
 }
 
 .file-viewer-name {
   font-weight: 600;
   font-size: 0.875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .file-status-badge {
@@ -336,33 +359,174 @@
   font-size: 0.6875rem;
   font-weight: 600;
   text-transform: uppercase;
+  flex-shrink: 0;
 }
 
 .file-status-badge.added { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
 .file-status-badge.modified { background: rgba(234, 179, 8, 0.2); color: #eab308; }
 .file-status-badge.removed { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
 
-.file-viewer-meta {
+.file-viewer-toolbar {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.file-viewer-path-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex: 1;
-  margin-left: 16px;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
 }
 
 .file-viewer-path {
   font-size: 0.75rem;
   color: var(--text-muted);
   font-family: monospace;
+  word-break: break-all;
 }
 
 .file-viewer-lang {
   font-size: 0.6875rem;
   color: var(--text-muted);
-  background: var(--bg-secondary);
+  background: var(--bg-tertiary);
   padding: 2px 8px;
   border-radius: var(--radius-full);
 }
+
+.file-viewer-size {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.file-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.toolbar-btn.active {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Commit jump dropdown */
+.commit-jump-dropdown {
+  position: relative;
+}
+
+.commit-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  width: 320px;
+  max-height: 300px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.dropdown-header {
+  padding: 8px 12px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.dropdown-list {
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  transition: background-color 0.15s;
+}
+
+.dropdown-item:hover {
+  background: var(--bg-secondary);
+}
+
+.dropdown-item.active {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.dropdown-sha {
+  font-family: monospace;
+  color: var(--accent-secondary);
+  flex-shrink: 0;
+}
+
+.dropdown-item.active .dropdown-sha {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.dropdown-msg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-status {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  font-size: 0.625rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.dropdown-status.added { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+.dropdown-status.modified { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+.dropdown-status.removed { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+.dropdown-item.active .dropdown-status { background: rgba(255, 255, 255, 0.2); color: white; }
 
 .file-viewer-close {
   display: flex;
@@ -372,6 +536,7 @@
   height: 32px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .file-viewer-close:hover {
@@ -382,7 +547,68 @@
 .file-viewer-content {
   flex: 1;
   overflow: auto;
-  padding: 16px;
+  padding: 0;
+}
+
+/* Diff view styles */
+.file-viewer-diff {
+  padding: 0 !important;
+}
+
+.diff-line {
+  display: flex;
+  min-height: 1.6em;
+  line-height: 1.6;
+}
+
+.diff-line-num {
+  width: 40px;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  user-select: none;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+}
+
+.diff-line-content {
+  flex: 1;
+  padding: 0 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-unchanged {
+  background: transparent;
+}
+
+.diff-added {
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.diff-added .diff-line-num {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+
+.diff-added .diff-line-content {
+  color: #4ade80;
+}
+
+.diff-removed {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.diff-removed .diff-line-num {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.diff-removed .diff-line-content {
+  color: #f87171;
+  text-decoration: line-through;
+  opacity: 0.7;
 }
 
 .file-viewer-loading,
@@ -466,6 +692,7 @@
 
 .file-viewer-code {
   margin: 0;
+  padding: 12px;
   font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
   font-size: 0.8125rem;
   line-height: 1.6;
