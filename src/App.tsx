@@ -237,9 +237,16 @@ export default function App() {
     setSelectedFile(null);
   }, []);
 
-  // Handle file selection
+  // Handle file selection - auto-open panel when selecting
   const handleFileSelect = useCallback((path: string) => {
-    setSelectedFile(prev => prev === path ? null : path);
+    setSelectedFile(prev => {
+      const newSelection = prev === path ? null : path;
+      // Auto-show file panel when a file is selected
+      if (newSelection) {
+        setShowFilePanel(true);
+      }
+      return newSelection;
+    });
   }, []);
 
   // Start playback automatically when visualization is ready
@@ -364,15 +371,17 @@ export default function App() {
       </header>
 
       <main className="app-main">
-        {selectedFile && showFilePanel && (
+        {selectedFile !== null && showFilePanel && (
           <Suspense fallback={<LoadingFallback />}>
             <FileViewer
               filePath={selectedFile}
               currentCommit={currentCommit}
               commits={commits}
               currentCommitIndex={currentCommitIndex}
+              fileTree={fileTree}
               onClose={() => setSelectedFile(null)}
               onSeekToCommit={handleSeek}
+              onNavigate={(path) => setSelectedFile(path)}
             />
           </Suspense>
         )}
