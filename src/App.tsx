@@ -197,10 +197,10 @@ export default function App() {
           <span className="logo-text">Vibource</span>
         </button>
         {repoInfo && (
-          <div className="repo-badge">
+          <button onClick={handleReset} className="repo-badge" title="Click to switch repository">
             <span>{repoInfo.owner}/{repoInfo.repo}</span>
             <span className="branch-badge">{repoInfo.branch}</span>
-          </div>
+          </button>
         )}
         <button
           onClick={() => setShowStats(!showStats)}

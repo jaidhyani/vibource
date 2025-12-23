@@ -9,7 +9,7 @@ interface RepoInputProps {
 }
 
 export default function RepoInput({ onSubmit, isLoading, loadingProgress, error }: RepoInputProps) {
-  const [repoUrl, setRepoUrl] = useState('');
+  const [repoUrl, setRepoUrl] = useState('luthienresearch/luthien-proxy');
   const [branch, setBranch] = useState('');
   const [commitCount, setCommitCount] = useState('1000');
   const [showOptions, setShowOptions] = useState(false);
@@ -23,9 +23,9 @@ export default function RepoInput({ onSubmit, isLoading, loadingProgress, error 
   };
 
   const exampleRepos = [
+    { name: 'Luthien Proxy', url: 'luthienresearch/luthien-proxy' },
     { name: 'React', url: 'facebook/react' },
     { name: 'Vue', url: 'vuejs/vue' },
-    { name: 'Svelte', url: 'sveltejs/svelte' },
     { name: 'D3', url: 'd3/d3' },
   ];
 
