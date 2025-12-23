@@ -64,8 +64,8 @@ export default function App() {
   const [loadingProgress, setLoadingProgress] = useState<{ phase: string; loaded: number; total: number | null }>({ phase: '', loaded: 0, total: null });
   const [error, setError] = useState<string | null>(null);
   const [showStats, setShowStats] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(true);
-  const [showFilePanel, setShowFilePanel] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [showFilePanel, setShowFilePanel] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
   const playIntervalRef = useRef<number | null>(null);
