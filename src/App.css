@@ -485,6 +485,22 @@
   display: block;
 }
 
+.node-tooltip {
+  position: absolute;
+  padding: 6px 10px;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-family: 'SF Mono', 'Monaco', monospace;
+  color: var(--text-primary);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: var(--shadow-md);
+  transform: translateX(-50%);
+}
+
 .commit-info {
   position: absolute;
   bottom: 100px;
