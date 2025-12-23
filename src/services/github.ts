@@ -77,8 +77,10 @@ export async function fetchCommits(
 
     page++;
 
-    // Rate limiting delay
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Small delay between pages
+    if (commits.length < maxCommits) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
   }
 
   return commits.reverse(); // Oldest first
@@ -123,13 +125,28 @@ export async function fetchCommitsWithFiles(
   const commits = await fetchCommits(repoInfo, token, maxCommits);
   const total = commits.length;
 
-  // Fetch file details for each commit (with rate limiting)
-  for (let i = 0; i < commits.length; i++) {
-    commits[i].files = await fetchCommitDetails(repoInfo, commits[i].sha, token);
-    onProgress?.(i + 1, total);
+  // Fetch file details in parallel batches for speed
+  const BATCH_SIZE = 10;
+  let completed = 0;
 
-    // Rate limiting delay
-    await new Promise(resolve => setTimeout(resolve, 50));
+  for (let i = 0; i < commits.length; i += BATCH_SIZE) {
+    const batch = commits.slice(i, i + BATCH_SIZE);
+
+    const results = await Promise.all(
+      batch.map(commit => fetchCommitDetails(repoInfo, commit.sha, token))
+    );
+
+    results.forEach((files, idx) => {
+      commits[i + idx].files = files;
+    });
+
+    completed += batch.length;
+    onProgress?.(completed, total);
+
+    // Small delay between batches to avoid rate limits
+    if (i + BATCH_SIZE < commits.length) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
   }
 
   return commits;
