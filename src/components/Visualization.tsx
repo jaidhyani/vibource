@@ -692,17 +692,20 @@ export default function Visualization({
           changeSize: pos.changeSize,
         }));
 
-        // Calculate stroke width based on change size (min 1, max 5)
+        // Subtle purple color for author links
+        const linkColor = '#a78bfa'; // Soft purple
+
+        // Calculate stroke width based on change size (thinner: 0.5-2px)
         const getStrokeWidth = (changeSize: number) => {
           const normalized = Math.log(changeSize + 1) / Math.log(maxChangeSize + 1);
-          return 1 + normalized * 4; // 1-5 range
+          return 0.5 + normalized * 1.5; // 0.5-2 range
         };
 
         // Calculate glow intensity based on change size
         const getGlowFilter = (changeSize: number) => {
           const normalized = Math.log(changeSize + 1) / Math.log(maxChangeSize + 1);
-          const blur = 2 + normalized * 4; // 2-6px blur
-          return `drop-shadow(0 0 ${blur}px ${authorData.color})`;
+          const blur = 3 + normalized * 5; // 3-8px blur for nice glow
+          return `drop-shadow(0 0 ${blur}px ${linkColor})`;
         };
 
         const linkSelection = authorLinkGroup.selectAll<SVGLineElement, SimLink>('line.author-link')
@@ -710,12 +713,12 @@ export default function Visualization({
 
         linkSelection.exit().remove();
 
-        // Create the links with glow effect
+        // Create the links with subtle purple glow
         const enterLinks = linkSelection.enter()
           .append('line')
           .attr('class', 'author-link')
-          .attr('stroke', authorData.color)
-          .attr('stroke-opacity', 0.5)
+          .attr('stroke', linkColor)
+          .attr('stroke-opacity', 0.35)
           .attr('stroke-width', d => getStrokeWidth(d.changeSize || 1))
           .attr('stroke-linecap', 'round')
           .style('filter', d => getGlowFilter(d.changeSize || 1))
@@ -734,7 +737,7 @@ export default function Visualization({
         enterLinks
           .attr('stroke-opacity', 0)
           .transition().duration(200)
-          .attr('stroke-opacity', 0.5);
+          .attr('stroke-opacity', 0.35);
 
         // Cache author link selection for tick updates (persists until next commit)
         authorLinkSelectionRef.current = authorLinkGroup.selectAll<SVGLineElement, SimLink>('line.author-link');
