@@ -220,8 +220,9 @@ export function applyCommitToTree(
         if (node) {
           node.status = 'removed';
           modifiedNodes.push(node);
-          // Don't actually remove yet - let the animation handle it
         }
+        // Actually remove the file from tree
+        removeFileFromTree(root, file.filename);
         break;
 
       case 'renamed':

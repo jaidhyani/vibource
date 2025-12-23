@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { X, FileText, AlertCircle } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import { X, FileText, AlertCircle, FileCode } from 'lucide-react';
 import type { Commit } from '../types';
+import { readFileAtCommit, type FileContent } from '../services/git';
 
 interface FileViewerProps {
   filePath: string | null;
@@ -41,55 +42,58 @@ function detectLanguage(filename: string): string {
   return langMap[ext] || 'plaintext';
 }
 
-// Check if file is likely binary
-function isBinaryFile(filename: string): boolean {
-  const binaryExtensions = [
-    'png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'webp', 'svg',
-    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
-    'zip', 'tar', 'gz', 'rar', '7z',
-    'exe', 'dll', 'so', 'dylib',
-    'mp3', 'mp4', 'wav', 'avi', 'mov', 'webm',
-    'ttf', 'otf', 'woff', 'woff2', 'eot',
-    'pyc', 'class', 'o', 'obj',
-  ];
-  const ext = filename.split('.').pop()?.toLowerCase() || '';
-  return binaryExtensions.includes(ext);
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default function FileViewer({ filePath, currentCommit, onClose }: FileViewerProps) {
-  const [content, setContent] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cacheRef = useRef<Map<string, FileContent>>(new Map());
 
   useEffect(() => {
-    if (!filePath) {
-      setContent(null);
+    if (!filePath || !currentCommit) {
+      setFileContent(null);
       setError(null);
       return;
     }
 
-    // Check if binary
-    if (isBinaryFile(filePath)) {
-      setContent(null);
-      setError('Binary file - cannot display contents');
+    const cacheKey = `${currentCommit.sha}:${filePath}`;
+
+    // Check cache first
+    const cached = cacheRef.current.get(cacheKey);
+    if (cached) {
+      setFileContent(cached);
+      setError(null);
       return;
     }
 
-    // For now, we'll show a placeholder since we don't have actual file content
-    // In a full implementation, we'd fetch from git using isomorphic-git
     setLoading(true);
     setError(null);
 
-    // Simulate loading
-    const timeout = setTimeout(() => {
-      setLoading(false);
-      // We don't have actual file content access yet
-      // This would require reading from the git repo
-      setContent(null);
-      setError('File content viewing not yet implemented.\nThe file tree shows file changes per commit.');
-    }, 100);
-
-    return () => clearTimeout(timeout);
+    readFileAtCommit(currentCommit.sha, filePath)
+      .then(content => {
+        setLoading(false);
+        if (content) {
+          // Cache the result
+          cacheRef.current.set(cacheKey, content);
+          // Limit cache size
+          if (cacheRef.current.size > 50) {
+            const firstKey = cacheRef.current.keys().next().value;
+            if (firstKey) cacheRef.current.delete(firstKey);
+          }
+          setFileContent(content);
+        } else {
+          setError('File not found at this commit');
+        }
+      })
+      .catch(() => {
+        setLoading(false);
+        setError('Failed to load file content');
+      });
   }, [filePath, currentCommit]);
 
   if (!filePath) return null;
@@ -105,7 +109,7 @@ export default function FileViewer({ filePath, currentCommit, onClose }: FileVie
     <div className="file-viewer">
       <div className="file-viewer-header">
         <div className="file-viewer-title">
-          <FileText size={16} />
+          <FileCode size={16} />
           <span className="file-viewer-name">{filename}</span>
           {status && (
             <span className={`file-status-badge ${status}`}>
@@ -116,6 +120,9 @@ export default function FileViewer({ filePath, currentCommit, onClose }: FileVie
         <div className="file-viewer-meta">
           <span className="file-viewer-path">{filePath}</span>
           <span className="file-viewer-lang">{language}</span>
+          {fileContent && (
+            <span className="file-viewer-size">{formatFileSize(fileContent.size)}</span>
+          )}
         </div>
         <button onClick={onClose} className="file-viewer-close" title="Close">
           <X size={18} />
@@ -125,7 +132,8 @@ export default function FileViewer({ filePath, currentCommit, onClose }: FileVie
       <div className="file-viewer-content">
         {loading && (
           <div className="file-viewer-loading">
-            Loading...
+            <div className="loading-spinner" />
+            <p>Loading file...</p>
           </div>
         )}
 
@@ -136,13 +144,28 @@ export default function FileViewer({ filePath, currentCommit, onClose }: FileVie
           </div>
         )}
 
-        {content && (
-          <pre className="file-viewer-code">
-            <code>{content}</code>
-          </pre>
+        {fileContent?.binary && (
+          <div className="file-viewer-binary">
+            <FileText size={48} />
+            <p>Binary file ({formatFileSize(fileContent.size)})</p>
+            <p className="binary-hint">Cannot display binary content</p>
+          </div>
         )}
 
-        {!loading && !error && !content && (
+        {fileContent && !fileContent.binary && (
+          <>
+            {fileContent.truncated && (
+              <div className="file-viewer-truncated">
+                File truncated (showing first 100KB of {formatFileSize(fileContent.size)})
+              </div>
+            )}
+            <pre className="file-viewer-code">
+              <code>{fileContent.content}</code>
+            </pre>
+          </>
+        )}
+
+        {!loading && !error && !fileContent && (
           <div className="file-viewer-placeholder">
             <FileText size={48} />
             <p>Select a file to view its contents</p>

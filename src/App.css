@@ -412,6 +412,58 @@
   opacity: 0.5;
 }
 
+.file-viewer-binary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.file-viewer-binary svg {
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.binary-hint {
+  font-size: 0.75rem;
+  margin-top: 8px;
+}
+
+.file-viewer-truncated {
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: var(--radius-sm);
+  color: #eab308;
+  font-size: 0.75rem;
+}
+
+.file-viewer-size {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--bg-tertiary);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .file-viewer-code {
   margin: 0;
   font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
