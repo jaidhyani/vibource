@@ -21,7 +21,7 @@ export default function App() {
   const [modifiedFiles, setModifiedFiles] = useState<FileNode[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
-  const [loadingProgress, setLoadingProgress] = useState({ loaded: 0, total: 0 });
+  const [loadingProgress, setLoadingProgress] = useState<{ phase: string; loaded: number; total: number | null }>({ phase: '', loaded: 0, total: null });
   const [error, setError] = useState<string | null>(null);
   const [showStats, setShowStats] = useState(false);
 
@@ -30,11 +30,16 @@ export default function App() {
   const authorsRef = useRef<Map<string, Author>>(new Map());
 
   // Handle repo submission
-  const handleRepoSubmit = useCallback(async (repoUrl: string, _token?: string) => {
+  const handleRepoSubmit = useCallback(async (repoUrl: string, branch?: string, commitCount?: number) => {
     const parsed = parseRepoUrl(repoUrl);
     if (!parsed) {
       setError('Invalid repository URL. Use format: owner/repo or full GitHub URL');
       return;
+    }
+
+    // Override branch if provided
+    if (branch) {
+      parsed.branch = branch;
     }
 
     setError(null);
@@ -45,9 +50,8 @@ export default function App() {
       // Fetch commits with file changes (git clone handles branch detection)
       const fetchedCommits = await fetchCommitsWithFiles(
         parsed,
-        undefined,
-        200, // Max commits
-        (loaded, total) => setLoadingProgress({ loaded, total })
+        commitCount || 1000,
+        (phase, loaded, total) => setLoadingProgress({ phase, loaded, total })
       );
 
       if (fetchedCommits.length === 0) {
@@ -193,10 +197,10 @@ export default function App() {
           <span className="logo-text">Vibource</span>
         </button>
         {repoInfo && (
-          <div className="repo-badge">
+          <button onClick={handleReset} className="repo-badge" title="Click to switch repository">
             <span>{repoInfo.owner}/{repoInfo.repo}</span>
             <span className="branch-badge">{repoInfo.branch}</span>
-          </div>
+          </button>
         )}
         <button
           onClick={() => setShowStats(!showStats)}

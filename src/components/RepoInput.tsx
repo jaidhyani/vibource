@@ -1,31 +1,37 @@
 import { useState } from 'react';
-import { Github, Key, Loader2, GitBranch } from 'lucide-react';
+import { Github, Loader2, GitBranch, Hash, Settings } from 'lucide-react';
 
 interface RepoInputProps {
-  onSubmit: (repoUrl: string, token?: string) => void;
+  onSubmit: (repoUrl: string, branch?: string, commitCount?: number) => void;
   isLoading: boolean;
-  loadingProgress?: { loaded: number; total: number };
+  loadingProgress?: { phase: string; loaded: number; total: number | null };
   error?: string | null;
 }
 
 export default function RepoInput({ onSubmit, isLoading, loadingProgress, error }: RepoInputProps) {
-  const [repoUrl, setRepoUrl] = useState('');
-  const [token, setToken] = useState('');
-  const [showToken, setShowToken] = useState(false);
+  const [repoUrl, setRepoUrl] = useState('luthienresearch/luthien-proxy');
+  const [branch, setBranch] = useState('');
+  const [commitCount, setCommitCount] = useState('1000');
+  const [showOptions, setShowOptions] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (repoUrl.trim()) {
-      onSubmit(repoUrl.trim(), token.trim() || undefined);
+      const count = parseInt(commitCount, 10) || 1000;
+      onSubmit(repoUrl.trim(), branch.trim() || undefined, count);
     }
   };
 
   const exampleRepos = [
+    { name: 'Luthien Proxy', url: 'luthienresearch/luthien-proxy' },
     { name: 'React', url: 'facebook/react' },
     { name: 'Vue', url: 'vuejs/vue' },
-    { name: 'Svelte', url: 'sveltejs/svelte' },
     { name: 'D3', url: 'd3/d3' },
   ];
+
+  const progressPercent = loadingProgress?.total
+    ? Math.round((loadingProgress.loaded / loadingProgress.total) * 100)
+    : null;
 
   return (
     <div className="repo-input-container">
@@ -54,23 +60,38 @@ export default function RepoInput({ onSubmit, isLoading, loadingProgress, error 
           <button
             type="button"
             className="token-toggle"
-            onClick={() => setShowToken(!showToken)}
+            onClick={() => setShowOptions(!showOptions)}
           >
-            <Key size={16} />
-            {showToken ? 'Hide' : 'Add'} GitHub Token (optional)
+            <Settings size={16} />
+            {showOptions ? 'Hide' : 'Show'} Options
           </button>
 
-          {showToken && (
-            <div className="input-group">
-              <Key size={20} className="input-icon" />
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="GitHub personal access token"
-                className="repo-input"
-                disabled={isLoading}
-              />
+          {showOptions && (
+            <div className="options-section">
+              <div className="input-group">
+                <GitBranch size={20} className="input-icon" />
+                <input
+                  type="text"
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value)}
+                  placeholder="Branch (default: main)"
+                  className="repo-input"
+                  disabled={isLoading}
+                />
+              </div>
+              <div className="input-group">
+                <Hash size={20} className="input-icon" />
+                <input
+                  type="number"
+                  value={commitCount}
+                  onChange={(e) => setCommitCount(e.target.value)}
+                  placeholder="Number of commits"
+                  className="repo-input"
+                  disabled={isLoading}
+                  min={1}
+                  max={10000}
+                />
+              </div>
             </div>
           )}
 
@@ -95,17 +116,23 @@ export default function RepoInput({ onSubmit, isLoading, loadingProgress, error 
 
         {isLoading && loadingProgress && (
           <div className="loading-progress">
-            <div className="progress-bar">
-              <div
-                className="progress-fill"
-                style={{
-                  width: `${(loadingProgress.loaded / loadingProgress.total) * 100}%`,
-                }}
-              />
-            </div>
-            <p className="progress-text">
-              Fetching commits: {loadingProgress.loaded} / {loadingProgress.total}
-            </p>
+            {progressPercent !== null ? (
+              <>
+                <div className="progress-bar">
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <p className="progress-text">
+                  {loadingProgress.phase} ({progressPercent}%)
+                </p>
+              </>
+            ) : (
+              <p className="progress-text">
+                {loadingProgress.phase}
+              </p>
+            )}
           </div>
         )}
 
@@ -135,10 +162,7 @@ export default function RepoInput({ onSubmit, isLoading, loadingProgress, error 
         <div className="info-text">
           <p>
             Watch your project grow from the first commit.
-            See contributors working on the codebase in real-time.
-          </p>
-          <p className="note">
-            For private repos or higher API limits, add a GitHub token.
+            See contributors working on the codebase over time.
           </p>
         </div>
       </div>

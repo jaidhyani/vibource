@@ -42,9 +42,8 @@ let diffComputationAbort: (() => void) | null = null;
 
 export async function fetchCommitsWithFiles(
   repoInfo: RepoInfo,
-  _token?: string,
-  maxCommits: number = 200,
-  onProgress?: (loaded: number, total: number) => void
+  maxCommits: number = 1000,
+  onProgress?: (phase: string, loaded: number, total: number | null) => void
 ): Promise<Commit[]> {
   if (diffComputationAbort) {
     diffComputationAbort();
@@ -56,7 +55,7 @@ export async function fetchCommitsWithFiles(
   const dir = repoDir!;
   const repoUrl = `https://github.com/${repoInfo.owner}/${repoInfo.repo}.git`;
 
-  onProgress?.(0, 100);
+  onProgress?.('Connecting...', 0, null);
 
   // Clone
   try {
@@ -71,8 +70,10 @@ export async function fetchCommitsWithFiles(
       depth: maxCommits + 1,
       noCheckout: true,
       onProgress: (event) => {
-        if (event.total && event.phase === 'Receiving objects') {
-          onProgress?.(Math.floor((event.loaded / event.total) * 90), 100);
+        if (event.phase === 'Receiving objects' && event.total) {
+          onProgress?.('Cloning repository...', event.loaded, event.total);
+        } else if (event.phase) {
+          onProgress?.(event.phase, 0, null);
         }
       },
     });
@@ -90,8 +91,10 @@ export async function fetchCommitsWithFiles(
         depth: maxCommits + 1,
         noCheckout: true,
         onProgress: (event) => {
-          if (event.total && event.phase === 'Receiving objects') {
-            onProgress?.(Math.floor((event.loaded / event.total) * 90), 100);
+          if (event.phase === 'Receiving objects' && event.total) {
+            onProgress?.('Cloning repository...', event.loaded, event.total);
+          } else if (event.phase) {
+            onProgress?.(event.phase, 0, null);
           }
         },
       });
@@ -100,7 +103,7 @@ export async function fetchCommitsWithFiles(
     }
   }
 
-  onProgress?.(95, 100);
+  onProgress?.('Reading commit history...', 0, null);
 
   const log = await git.log({ fs: lfs, dir, depth: maxCommits });
 
@@ -115,7 +118,7 @@ export async function fetchCommitsWithFiles(
     files: [],
   }));
 
-  onProgress?.(100, 100);
+  onProgress?.('Ready!', commits.length, commits.length);
 
   // Start background diff with incremental tree comparison
   startBackgroundDiffComputation(lfs, dir, commits);
