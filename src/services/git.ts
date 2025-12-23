@@ -38,10 +38,6 @@ export function parseRepoUrl(url: string): RepoInfo | null {
   return null;
 }
 
-// Tree cache for diff computation
-const treeCache = new Map<string, Map<string, string>>();
-
-// Background diff computation state
 let diffComputationAbort: (() => void) | null = null;
 
 export async function fetchCommitsWithFiles(
@@ -50,7 +46,6 @@ export async function fetchCommitsWithFiles(
   maxCommits: number = 200,
   onProgress?: (loaded: number, total: number) => void
 ): Promise<Commit[]> {
-  // Abort any previous background computation
   if (diffComputationAbort) {
     diffComputationAbort();
     diffComputationAbort = null;
@@ -61,10 +56,9 @@ export async function fetchCommitsWithFiles(
   const dir = repoDir!;
   const repoUrl = `https://github.com/${repoInfo.owner}/${repoInfo.repo}.git`;
 
-  treeCache.clear();
   onProgress?.(0, 100);
 
-  // Clone the repository
+  // Clone
   try {
     await git.clone({
       fs: lfs,
@@ -108,10 +102,8 @@ export async function fetchCommitsWithFiles(
 
   onProgress?.(95, 100);
 
-  // Get commit log instantly
   const log = await git.log({ fs: lfs, dir, depth: maxCommits });
 
-  // Build commits (oldest first) with empty files - will be filled in background
   const commits: Commit[] = [...log].reverse().map(entry => ({
     sha: entry.oid,
     message: entry.commit.message,
@@ -125,7 +117,7 @@ export async function fetchCommitsWithFiles(
 
   onProgress?.(100, 100);
 
-  // Start background diff computation
+  // Start background diff with incremental tree comparison
   startBackgroundDiffComputation(lfs, dir, commits);
 
   return commits;
@@ -139,7 +131,7 @@ async function startBackgroundDiffComputation(
   let aborted = false;
   diffComputationAbort = () => { aborted = true; };
 
-  let previousTree = new Map<string, string>();
+  let prevTreeOid: string | null = null;
 
   for (let i = 0; i < commits.length; i++) {
     if (aborted) break;
@@ -147,84 +139,145 @@ async function startBackgroundDiffComputation(
     const commit = commits[i];
 
     try {
-      // Get tree OID for this commit
       const { commit: commitObj } = await git.readCommit({ fs: lfs, dir, oid: commit.sha });
       const treeOid = commitObj.tree;
 
-      // Get current tree (cached if possible)
-      let currentTree = treeCache.get(treeOid);
-      if (!currentTree) {
-        currentTree = await walkTree(lfs, dir, treeOid);
-        treeCache.set(treeOid, currentTree);
-      }
-
-      // Compute diff
-      const files = diffTrees(previousTree, currentTree);
-
-      // Update commit in place (reactive update for UI)
+      // Incremental diff: only walk into subtrees that changed
+      const files = await diffTreesIncremental(lfs, dir, prevTreeOid, treeOid, '');
       commit.files = files;
 
-      previousTree = currentTree;
+      prevTreeOid = treeOid;
     } catch {
-      // Skip commits we can't process
+      // Skip
     }
 
-    // Yield to UI every 5 commits
-    if (i % 5 === 0) {
+    // Yield every 10 commits
+    if (i % 10 === 0) {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
 }
 
-async function walkTree(
+// Incremental tree diff - only descends into subtrees with different OIDs
+async function diffTreesIncremental(
   lfs: LightningFS,
   dir: string,
-  treeOid: string
-): Promise<Map<string, string>> {
-  const files = new Map<string, string>();
-
-  async function walk(oid: string, basePath: string): Promise<void> {
-    try {
-      const { tree } = await git.readTree({ fs: lfs, dir, oid });
-      const subtrees: Promise<void>[] = [];
-
-      for (const entry of tree) {
-        const fullPath = basePath ? `${basePath}/${entry.path}` : entry.path;
-        if (entry.type === 'blob') {
-          files.set(fullPath, entry.oid);
-        } else if (entry.type === 'tree') {
-          subtrees.push(walk(entry.oid, fullPath));
-        }
-      }
-      await Promise.all(subtrees);
-    } catch {
-      // ignore
-    }
-  }
-
-  await walk(treeOid, '');
-  return files;
-}
-
-function diffTrees(oldTree: Map<string, string>, newTree: Map<string, string>): FileChange[] {
+  oldTreeOid: string | null,
+  newTreeOid: string,
+  basePath: string
+): Promise<FileChange[]> {
   const changes: FileChange[] = [];
 
-  for (const [path, oid] of newTree) {
-    const oldOid = oldTree.get(path);
-    if (!oldOid) {
-      changes.push({ filename: path, status: 'added', additions: 0, deletions: 0 });
-    } else if (oldOid !== oid) {
-      changes.push({ filename: path, status: 'modified', additions: 0, deletions: 0 });
-    }
+  // If trees are identical, no changes
+  if (oldTreeOid === newTreeOid) {
+    return changes;
   }
 
-  for (const [path] of oldTree) {
-    if (!newTree.has(path)) {
-      changes.push({ filename: path, status: 'removed', additions: 0, deletions: 0 });
+  // Read both trees
+  const newTree = await readTreeSafe(lfs, dir, newTreeOid);
+  const oldTree = oldTreeOid ? await readTreeSafe(lfs, dir, oldTreeOid) : [];
+
+  // Build maps for O(1) lookup
+  const oldMap = new Map(oldTree.map(e => [e.path, e]));
+  const newMap = new Map(newTree.map(e => [e.path, e]));
+
+  // Check entries in new tree
+  for (const entry of newTree) {
+    const fullPath = basePath ? `${basePath}/${entry.path}` : entry.path;
+    const oldEntry = oldMap.get(entry.path);
+
+    if (!oldEntry) {
+      // Added - collect all files if it's a tree
+      if (entry.type === 'blob') {
+        changes.push({ filename: fullPath, status: 'added', additions: 0, deletions: 0 });
+      } else if (entry.type === 'tree') {
+        const subFiles = await collectAllFiles(lfs, dir, entry.oid, fullPath);
+        for (const f of subFiles) {
+          changes.push({ filename: f, status: 'added', additions: 0, deletions: 0 });
+        }
+      }
+    } else if (oldEntry.oid !== entry.oid) {
+      // Changed
+      if (entry.type === 'blob' && oldEntry.type === 'blob') {
+        changes.push({ filename: fullPath, status: 'modified', additions: 0, deletions: 0 });
+      } else if (entry.type === 'tree' && oldEntry.type === 'tree') {
+        // Recurse into changed subtree
+        const subChanges = await diffTreesIncremental(lfs, dir, oldEntry.oid, entry.oid, fullPath);
+        changes.push(...subChanges);
+      } else {
+        // Type changed (rare) - treat as remove + add
+        if (oldEntry.type === 'blob') {
+          changes.push({ filename: fullPath, status: 'removed', additions: 0, deletions: 0 });
+        } else {
+          const oldFiles = await collectAllFiles(lfs, dir, oldEntry.oid, fullPath);
+          for (const f of oldFiles) {
+            changes.push({ filename: f, status: 'removed', additions: 0, deletions: 0 });
+          }
+        }
+        if (entry.type === 'blob') {
+          changes.push({ filename: fullPath, status: 'added', additions: 0, deletions: 0 });
+        } else {
+          const newFiles = await collectAllFiles(lfs, dir, entry.oid, fullPath);
+          for (const f of newFiles) {
+            changes.push({ filename: f, status: 'added', additions: 0, deletions: 0 });
+          }
+        }
+      }
+    }
+    // If OIDs match, no change - skip entirely
+  }
+
+  // Check for removed entries
+  for (const entry of oldTree) {
+    if (!newMap.has(entry.path)) {
+      const fullPath = basePath ? `${basePath}/${entry.path}` : entry.path;
+      if (entry.type === 'blob') {
+        changes.push({ filename: fullPath, status: 'removed', additions: 0, deletions: 0 });
+      } else if (entry.type === 'tree') {
+        const subFiles = await collectAllFiles(lfs, dir, entry.oid, fullPath);
+        for (const f of subFiles) {
+          changes.push({ filename: f, status: 'removed', additions: 0, deletions: 0 });
+        }
+      }
     }
   }
 
   return changes;
+}
+
+async function readTreeSafe(
+  lfs: LightningFS,
+  dir: string,
+  oid: string
+): Promise<{ path: string; oid: string; type: string }[]> {
+  try {
+    const { tree } = await git.readTree({ fs: lfs, dir, oid });
+    return tree;
+  } catch {
+    return [];
+  }
+}
+
+async function collectAllFiles(
+  lfs: LightningFS,
+  dir: string,
+  treeOid: string,
+  basePath: string
+): Promise<string[]> {
+  const files: string[] = [];
+  const tree = await readTreeSafe(lfs, dir, treeOid);
+
+  for (const entry of tree) {
+    const fullPath = basePath ? `${basePath}/${entry.path}` : entry.path;
+    if (entry.type === 'blob') {
+      files.push(fullPath);
+    } else if (entry.type === 'tree') {
+      const subFiles = await collectAllFiles(lfs, dir, entry.oid, fullPath);
+      files.push(...subFiles);
+    }
+  }
+
+  return files;
 }
 
 export async function getDefaultBranch(repoInfo: RepoInfo): Promise<string> {
