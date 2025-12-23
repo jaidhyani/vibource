@@ -32,6 +32,13 @@ export default function App() {
   const playIntervalRef = useRef<number | null>(null);
   const treeRef = useRef<FileNode>(createFileTree());
   const authorsRef = useRef<Map<string, Author>>(new Map());
+  const lastPlaybackTimeRef = useRef<number>(0);
+  const commitsRef = useRef<Commit[]>([]);
+  const currentIndexRef = useRef<number>(-1);
+
+  // Keep refs in sync with state
+  commitsRef.current = commits;
+  currentIndexRef.current = currentCommitIndex;
 
   // Handle repo submission
   const handleRepoSubmit = useCallback(async (repoUrl: string, branch?: string, commitCount?: number) => {
@@ -98,31 +105,53 @@ export default function App() {
     setCurrentCommitIndex(index);
   }, [commits]);
 
-  // Playback control
+  // Playback control - uses requestAnimationFrame for consistent timing
   useEffect(() => {
-    if (isPlaying && appState === 'visualizing') {
-      const interval = 1000 / playbackSpeed;
-
-      playIntervalRef.current = window.setInterval(() => {
-        setCurrentCommitIndex(prev => {
-          const next = prev + 1;
-          if (next >= commits.length) {
-            setIsPlaying(false);
-            return prev;
-          }
-          processCommit(next);
-          return next;
-        });
-      }, interval);
+    if (!isPlaying || appState !== 'visualizing') {
+      if (playIntervalRef.current) {
+        cancelAnimationFrame(playIntervalRef.current);
+        playIntervalRef.current = null;
+      }
+      return;
     }
+
+    const interval = 1000 / playbackSpeed;
+    lastPlaybackTimeRef.current = performance.now();
+
+    const tick = (now: number) => {
+      const elapsed = now - lastPlaybackTimeRef.current;
+
+      if (elapsed >= interval) {
+        lastPlaybackTimeRef.current = now - (elapsed % interval); // Account for drift
+
+        const nextIndex = currentIndexRef.current + 1;
+        if (nextIndex >= commitsRef.current.length) {
+          setIsPlaying(false);
+          return;
+        }
+
+        // Apply commit directly using refs to avoid stale closures
+        const commit = commitsRef.current[nextIndex];
+        const modified = applyCommitToTree(treeRef.current, commit, authorsRef.current);
+
+        setFileTree({ ...treeRef.current });
+        setAuthors(new Map(authorsRef.current));
+        setModifiedFiles(modified);
+        setCurrentCommitIndex(nextIndex);
+      }
+
+      playIntervalRef.current = requestAnimationFrame(tick);
+    };
+
+    playIntervalRef.current = requestAnimationFrame(tick);
 
     return () => {
       if (playIntervalRef.current) {
-        clearInterval(playIntervalRef.current);
+        cancelAnimationFrame(playIntervalRef.current);
         playIntervalRef.current = null;
       }
     };
-  }, [isPlaying, playbackSpeed, commits.length, processCommit, appState]);
+  }, [isPlaying, playbackSpeed, appState]);
 
   // Handle seeking
   const handleSeek = useCallback((targetIndex: number) => {
@@ -179,13 +208,21 @@ export default function App() {
     if (appState === 'visualizing' && currentCommitIndex === -1 && commits.length > 0) {
       // Small delay before starting
       const timeout = setTimeout(() => {
+        // Apply first commit
+        const commit = commitsRef.current[0];
+        if (commit) {
+          const modified = applyCommitToTree(treeRef.current, commit, authorsRef.current);
+          setFileTree({ ...treeRef.current });
+          setAuthors(new Map(authorsRef.current));
+          setModifiedFiles(modified);
+          setCurrentCommitIndex(0);
+        }
         setIsPlaying(true);
-        processCommit(0);
       }, 500);
 
       return () => clearTimeout(timeout);
     }
-  }, [appState, currentCommitIndex, commits.length, processCommit]);
+  }, [appState, currentCommitIndex, commits.length]);
 
   const currentCommit = currentCommitIndex >= 0 ? commits[currentCommitIndex] : null;
   const currentDate = currentCommit ? new Date(currentCommit.author.date) : null;
