@@ -410,8 +410,9 @@ export default function Visualization({
       // Enlarge node on hover
       const node = d3.select(this);
       const circle = node.select('circle');
-      const currentR = parseFloat(circle.attr('r')) || 4;
-      const enlargedR = currentR * 1.8;
+      // Use fixed base radius to prevent compounding growth when animations overlap
+      const baseR = d.type === 'directory' ? (d.id === 'root' ? 12 : 8) : 4;
+      const enlargedR = baseR * 1.8;
 
       circle.transition()
         .duration(100)
@@ -554,7 +555,8 @@ export default function Visualization({
       if (nodeEl.empty()) return;
 
       const circle = nodeEl.select('circle');
-      const originalR = parseFloat(circle.attr('r')) || 4;
+      // Use fixed base radius to prevent compounding growth when animations overlap at high speeds
+      const originalR = 4; // Files always have radius 4
 
       let pulseColor = '#22c55e';
       if (file.status === 'modified') pulseColor = '#eab308';
