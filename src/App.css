@@ -417,6 +417,137 @@
 .file-viewer-name {
   font-weight: 600;
   font-size: 0.875rem;
+}
+
+/* Breadcrumb navigation */
+.file-viewer-breadcrumbs {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color);
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+.file-viewer-breadcrumbs::-webkit-scrollbar {
+  height: 4px;
+}
+
+.file-viewer-breadcrumbs::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+}
+
+.breadcrumb-segment {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.breadcrumb-separator {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.breadcrumb-item {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.breadcrumb-item:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.breadcrumb-root {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+}
+
+.breadcrumb-current {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Directory listing */
+.directory-listing {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.directory-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 32px;
+}
+
+.directory-empty svg {
+  opacity: 0.5;
+  margin-bottom: 12px;
+}
+
+.directory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.directory-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.directory-item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.directory-item-icon {
+  flex-shrink: 0;
+}
+
+.directory-item-icon.folder {
+  color: #f59e0b;
+}
+
+.directory-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.directory-item-count {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

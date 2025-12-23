@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { X, FileText, AlertCircle, FileCode, ChevronDown, GitCommit } from 'lucide-react';
-import type { Commit } from '../types';
+import { X, FileText, AlertCircle, FileCode, ChevronDown, GitCommit, Folder, ChevronRight, File } from 'lucide-react';
+import type { Commit, FileNode } from '../types';
 import { readFileAtCommit, type FileContent } from '../services/git';
 
 interface FileViewerProps {
@@ -8,8 +8,10 @@ interface FileViewerProps {
   currentCommit: Commit | null;
   commits: Commit[];
   currentCommitIndex: number;
+  fileTree: FileNode;
   onClose: () => void;
   onSeekToCommit?: (index: number) => void;
+  onNavigate?: (path: string) => void;
 }
 
 // Simple language detection for syntax highlighting hints
@@ -173,13 +175,40 @@ function computeLCS(oldLines: string[], newLines: string[]): { oldIndex: number;
   return result;
 }
 
+// Helper to find a node in the tree by path
+function findNodeByPath(tree: FileNode, path: string): FileNode | null {
+  if (tree.path === path) return tree;
+  if (tree.children) {
+    for (const child of tree.children) {
+      const found = findNodeByPath(child, path);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Get file extension color (similar to Visualization)
+function getFileColor(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  const colorMap: Record<string, string> = {
+    js: '#f7df1e', jsx: '#61dafb', ts: '#3178c6', tsx: '#3178c6',
+    py: '#3776ab', rb: '#cc342d', rs: '#dea584', go: '#00add8',
+    java: '#b07219', kt: '#a97bff', c: '#555555', cpp: '#f34b7d',
+    css: '#563d7c', scss: '#c6538c', html: '#e34c26', json: '#292929',
+    md: '#083fa1', yml: '#cb171e', yaml: '#cb171e', sh: '#89e051',
+  };
+  return colorMap[ext] || '#8da0cb';
+}
+
 export default function FileViewer({
   filePath,
   currentCommit,
   commits,
   currentCommitIndex,
+  fileTree,
   onClose,
-  onSeekToCommit
+  onSeekToCommit,
+  onNavigate
 }: FileViewerProps) {
   const [fileContent, setFileContent] = useState<FileContent | null>(null);
   const [previousContent, setPreviousContent] = useState<FileContent | null>(null);
@@ -190,6 +219,41 @@ export default function FileViewer({
   const abortControllerRef = useRef<AbortController | null>(null);
   const prefetchAbortRef = useRef<AbortController | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Determine if current path is a directory or file
+  // Empty string means root directory
+  const isRoot = filePath === '';
+  const currentNode = useMemo(() => {
+    if (isRoot) return fileTree; // Root is the fileTree itself
+    if (!filePath) return null;
+    return findNodeByPath(fileTree, filePath);
+  }, [filePath, fileTree, isRoot]);
+
+  const isDirectory = isRoot || currentNode?.type === 'directory';
+
+  // Get breadcrumb segments
+  const breadcrumbs = useMemo(() => {
+    if (!filePath) return []; // Root has no breadcrumbs (just the root icon)
+    const segments = filePath.split('/').filter(Boolean);
+    const crumbs: { name: string; path: string }[] = [];
+    let currentPath = '';
+    for (const segment of segments) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      crumbs.push({ name: segment, path: currentPath });
+    }
+    return crumbs;
+  }, [filePath]);
+
+  // Get directory contents if viewing a directory
+  const directoryContents = useMemo(() => {
+    if (!isDirectory) return [];
+    const children = currentNode?.children || [];
+    return [...children].sort((a, b) => {
+      // Directories first, then files
+      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [isDirectory, currentNode]);
 
   // Find commits where this file was changed
   const fileCommits = useMemo(() => {
@@ -351,9 +415,9 @@ export default function FileViewer({
     );
   }, [showDiff, fileContent, previousContent]);
 
-  if (!filePath) return null;
+  if (filePath === null) return null;
 
-  const filename = filePath.split('/').pop() || filePath;
+  const filename = isRoot ? 'Repository Root' : (filePath.split('/').pop() || filePath);
   const language = detectLanguage(filename);
 
   // Find file status from current commit
@@ -367,9 +431,9 @@ export default function FileViewer({
     <div className="file-viewer file-viewer-left">
       <div className="file-viewer-header">
         <div className="file-viewer-title">
-          <FileCode size={16} />
+          {isDirectory ? <Folder size={16} /> : <FileCode size={16} />}
           <span className="file-viewer-name">{filename}</span>
-          {status && (
+          {status && !isDirectory && (
             <span className={`file-status-badge ${status}`}>
               {status}
             </span>
@@ -380,123 +444,185 @@ export default function FileViewer({
         </button>
       </div>
 
-      <div className="file-viewer-toolbar">
-        <div className="file-viewer-path-row">
-          <span className="file-viewer-path">{filePath}</span>
-          <span className="file-viewer-lang">{language}</span>
-          {fileContent && (
-            <span className="file-viewer-size">{formatFileSize(fileContent.size)}</span>
-          )}
-        </div>
-
-        <div className="file-viewer-actions">
-          {fileCommits.length > 0 && (
-            <div className="commit-jump-dropdown" ref={dropdownRef}>
-              <button
-                className="toolbar-btn"
-                onClick={() => setShowCommitDropdown(!showCommitDropdown)}
-                title="Jump to commit where file changed"
-              >
-                <GitCommit size={14} />
-                <span>{currentFileCommitIndex + 1} / {fileCommits.length}</span>
-                <ChevronDown size={14} />
-              </button>
-              {showCommitDropdown && (
-                <div className="commit-dropdown-menu">
-                  <div className="dropdown-header">Commits with changes</div>
-                  <div className="dropdown-list">
-                    {fileCommits.map(({ commit, index }) => (
-                      <button
-                        key={commit.sha}
-                        className={`dropdown-item ${index === currentCommitIndex ? 'active' : ''}`}
-                        onClick={() => {
-                          onSeekToCommit?.(index);
-                          setShowCommitDropdown(false);
-                        }}
-                      >
-                        <span className="dropdown-sha">{commit.sha.slice(0, 7)}</span>
-                        <span className="dropdown-msg">
-                          {commit.message.split('\n')[0].slice(0, 40)}
-                          {commit.message.length > 40 ? '...' : ''}
-                        </span>
-                        <span className={`dropdown-status ${commit.files.find(f => f.filename === filePath)?.status}`}>
-                          {commit.files.find(f => f.filename === filePath)?.status?.charAt(0).toUpperCase()}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          <button
-            className={`toolbar-btn ${showDiff ? 'active' : ''}`}
-            onClick={() => setShowDiff(!showDiff)}
-            disabled={!previousContent && !fileChange?.status?.includes('added')}
-            title={previousContent ? 'Toggle diff view' : 'No previous version'}
-          >
-            Diff
-          </button>
-        </div>
+      {/* Breadcrumb navigation */}
+      <div className="file-viewer-breadcrumbs">
+        <button
+          className="breadcrumb-item breadcrumb-root"
+          onClick={() => onNavigate?.('')}
+          title="Go to root"
+        >
+          <Folder size={14} />
+        </button>
+        {breadcrumbs.map((crumb, i) => (
+          <span key={crumb.path} className="breadcrumb-segment">
+            <ChevronRight size={14} className="breadcrumb-separator" />
+            <button
+              className={`breadcrumb-item ${i === breadcrumbs.length - 1 ? 'breadcrumb-current' : ''}`}
+              onClick={() => onNavigate?.(crumb.path)}
+            >
+              {crumb.name}
+            </button>
+          </span>
+        ))}
       </div>
 
-      <div className="file-viewer-content">
-        {loading && (
-          <div className="file-viewer-loading">
-            <div className="loading-spinner" />
-            <p>Loading file...</p>
+      {/* Toolbar - only show for files */}
+      {!isDirectory && (
+        <div className="file-viewer-toolbar">
+          <div className="file-viewer-path-row">
+            <span className="file-viewer-lang">{language}</span>
+            {fileContent && (
+              <span className="file-viewer-size">{formatFileSize(fileContent.size)}</span>
+            )}
           </div>
-        )}
 
-        {error && (
-          <div className="file-viewer-error">
-            <AlertCircle size={24} />
-            <p>{error}</p>
-          </div>
-        )}
-
-        {fileContent?.binary && (
-          <div className="file-viewer-binary">
-            <FileText size={48} />
-            <p>Binary file ({formatFileSize(fileContent.size)})</p>
-            <p className="binary-hint">Cannot display binary content</p>
-          </div>
-        )}
-
-        {fileContent && !fileContent.binary && (
-          <>
-            {fileContent.truncated && (
-              <div className="file-viewer-truncated">
-                File truncated (showing first 100KB of {formatFileSize(fileContent.size)})
+          <div className="file-viewer-actions">
+            {fileCommits.length > 0 && (
+              <div className="commit-jump-dropdown" ref={dropdownRef}>
+                <button
+                  className="toolbar-btn"
+                  onClick={() => setShowCommitDropdown(!showCommitDropdown)}
+                  title="Jump to commit where file changed"
+                >
+                  <GitCommit size={14} />
+                  <span>{currentFileCommitIndex + 1} / {fileCommits.length}</span>
+                  <ChevronDown size={14} />
+                </button>
+                {showCommitDropdown && (
+                  <div className="commit-dropdown-menu">
+                    <div className="dropdown-header">Commits with changes</div>
+                    <div className="dropdown-list">
+                      {fileCommits.map(({ commit, index }) => (
+                        <button
+                          key={commit.sha}
+                          className={`dropdown-item ${index === currentCommitIndex ? 'active' : ''}`}
+                          onClick={() => {
+                            onSeekToCommit?.(index);
+                            setShowCommitDropdown(false);
+                          }}
+                        >
+                          <span className="dropdown-sha">{commit.sha.slice(0, 7)}</span>
+                          <span className="dropdown-msg">
+                            {commit.message.split('\n')[0].slice(0, 40)}
+                            {commit.message.length > 40 ? '...' : ''}
+                          </span>
+                          <span className={`dropdown-status ${commit.files.find(f => f.filename === filePath)?.status}`}>
+                            {commit.files.find(f => f.filename === filePath)?.status?.charAt(0).toUpperCase()}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-            {showDiff && diffLines ? (
-              <pre className="file-viewer-code file-viewer-diff">
-                <code>
-                  {diffLines.map((line, i) => (
-                    <div key={i} className={`diff-line diff-${line.type}`}>
-                      <span className="diff-line-num">
-                        {line.type === 'removed' ? '-' : line.lineNumber || ''}
-                      </span>
-                      <span className="diff-line-content">{line.content}</span>
-                    </div>
-                  ))}
-                </code>
-              </pre>
+
+            <button
+              className={`toolbar-btn ${showDiff ? 'active' : ''}`}
+              onClick={() => setShowDiff(!showDiff)}
+              disabled={!previousContent && !fileChange?.status?.includes('added')}
+              title={previousContent ? 'Toggle diff view' : 'No previous version'}
+            >
+              Diff
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="file-viewer-content">
+        {/* Directory listing */}
+        {isDirectory && (
+          <div className="directory-listing">
+            {directoryContents.length === 0 ? (
+              <div className="directory-empty">
+                <Folder size={32} />
+                <p>Empty directory</p>
+              </div>
             ) : (
-              <pre className="file-viewer-code">
-                <code>{fileContent.content}</code>
-              </pre>
+              <ul className="directory-list">
+                {directoryContents.map(item => (
+                  <li key={item.id}>
+                    <button
+                      className="directory-item"
+                      onClick={() => onNavigate?.(item.path)}
+                    >
+                      {item.type === 'directory' ? (
+                        <Folder size={16} className="directory-item-icon folder" />
+                      ) : (
+                        <File size={16} className="directory-item-icon file" style={{ color: getFileColor(item.name) }} />
+                      )}
+                      <span className="directory-item-name">{item.name}</span>
+                      {item.type === 'directory' && item.children && (
+                        <span className="directory-item-count">{item.children.length} items</span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
-          </>
+          </div>
         )}
 
-        {!loading && !error && !fileContent && (
-          <div className="file-viewer-placeholder">
-            <FileText size={48} />
-            <p>Select a file to view its contents</p>
-          </div>
+        {/* File content */}
+        {!isDirectory && (
+          <>
+            {loading && (
+              <div className="file-viewer-loading">
+                <div className="loading-spinner" />
+                <p>Loading file...</p>
+              </div>
+            )}
+
+            {error && (
+              <div className="file-viewer-error">
+                <AlertCircle size={24} />
+                <p>{error}</p>
+              </div>
+            )}
+
+            {fileContent?.binary && (
+              <div className="file-viewer-binary">
+                <FileText size={48} />
+                <p>Binary file ({formatFileSize(fileContent.size)})</p>
+                <p className="binary-hint">Cannot display binary content</p>
+              </div>
+            )}
+
+            {fileContent && !fileContent.binary && (
+              <>
+                {fileContent.truncated && (
+                  <div className="file-viewer-truncated">
+                    File truncated (showing first 100KB of {formatFileSize(fileContent.size)})
+                  </div>
+                )}
+                {showDiff && diffLines ? (
+                  <pre className="file-viewer-code file-viewer-diff">
+                    <code>
+                      {diffLines.map((line, i) => (
+                        <div key={i} className={`diff-line diff-${line.type}`}>
+                          <span className="diff-line-num">
+                            {line.type === 'removed' ? '-' : line.lineNumber || ''}
+                          </span>
+                          <span className="diff-line-content">{line.content}</span>
+                        </div>
+                      ))}
+                    </code>
+                  </pre>
+                ) : (
+                  <pre className="file-viewer-code">
+                    <code>{fileContent.content}</code>
+                  </pre>
+                )}
+              </>
+            )}
+
+            {!loading && !error && !fileContent && (
+              <div className="file-viewer-placeholder">
+                <FileText size={48} />
+                <p>Select a file to view its contents</p>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
