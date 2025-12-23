@@ -334,11 +334,14 @@ export default function App() {
         <div className="header-actions">
           <button
             onClick={() => setShowFilePanel(!showFilePanel)}
-            className={`icon-btn ${showFilePanel && selectedFile ? 'active' : ''}`}
+            className={`file-panel-btn ${showFilePanel && selectedFile ? 'active' : ''} ${selectedFile ? 'has-file' : ''}`}
             title="Toggle file panel"
             disabled={!selectedFile}
           >
-            {showFilePanel ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
+            {showFilePanel ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+            <span className="file-panel-btn-label">
+              {selectedFile ? (showFilePanel ? 'Hide File' : 'Show File') : 'No File'}
+            </span>
           </button>
           <button
             onClick={() => setShowSidebar(!showSidebar)}

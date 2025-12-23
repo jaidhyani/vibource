@@ -44,6 +44,7 @@ export default function Visualization({
   const simulationRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
   const nodesRef = useRef<Map<string, SimNode>>(new Map());
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const initializedRef = useRef(false);
 
   // Cached selections for performance
@@ -140,7 +141,10 @@ export default function Visualization({
         g.attr('transform', event.transform);
       });
 
+    zoomRef.current = zoom;
     svg.call(zoom);
+
+    // Center the view - translate so (0,0) is at center of viewport
     svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2).scale(0.8));
 
     // Create layer groups
@@ -168,6 +172,17 @@ export default function Visualization({
     return () => {
       simulation.stop();
     };
+  }, [dimensions]);
+
+  // Recenter view when dimensions change (but only after initial setup)
+  useEffect(() => {
+    if (!svgRef.current || !zoomRef.current || !initializedRef.current) return;
+
+    const svg = d3.select(svgRef.current);
+    const { width, height } = dimensions;
+
+    // Recenter the view
+    svg.call(zoomRef.current.transform, d3.zoomIdentity.translate(width / 2, height / 2).scale(0.8));
   }, [dimensions]);
 
   // Update graph when fileTree changes
