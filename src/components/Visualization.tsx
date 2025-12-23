@@ -32,6 +32,7 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   source: SimNode | string;
   target: SimNode | string;
   isAuthorLink?: boolean;
+  changeSize?: number; // For author links: additions + deletions
 }
 
 // Number of commits of inactivity before removing an author
@@ -505,15 +506,27 @@ export default function Visualization({
     const authorGroup = g.select<SVGGElement>('g.authors');
     const authorLinkGroup = g.select<SVGGElement>('g.author-links');
 
+    // Clear previous author links when processing new modifications
+    authorLinkGroup.selectAll('*').remove();
+
+    // Build a map of file path -> change size from current commit
+    const fileSizeMap = new Map<string, number>();
+    if (currentCommit) {
+      currentCommit.files.forEach(f => {
+        fileSizeMap.set(f.filename, (f.additions || 0) + (f.deletions || 0));
+      });
+    }
+
     // Collect modified file positions for author targeting
-    const modifiedPositions: { x: number; y: number; id: string }[] = [];
+    const modifiedPositions: { x: number; y: number; id: string; changeSize: number }[] = [];
 
     // Animate file modifications
     modifiedFiles.forEach(file => {
       const simNode = nodeMap.get(file.id);
       if (!simNode || simNode.x === undefined || simNode.y === undefined) return;
 
-      modifiedPositions.push({ x: simNode.x, y: simNode.y, id: file.id });
+      const changeSize = fileSizeMap.get(file.path) || 1;
+      modifiedPositions.push({ x: simNode.x, y: simNode.y, id: file.id, changeSize });
 
       const nodeEl = nodeGroup.selectAll<SVGGElement, SimNode>('g.node')
         .filter(d => d.id === file.id);
@@ -648,25 +661,44 @@ export default function Visualization({
         // Cache author selection
         authorSelectionRef.current = authorGroup.selectAll<SVGGElement, SimNode>('g.author-node');
 
-        // Draw transient edges from author to modified files
+        // Calculate max change size for scaling
+        const maxChangeSize = Math.max(...modifiedPositions.map(p => p.changeSize), 1);
+
+        // Draw persistent glowing edges from author to modified files
         const authorLinks: SimLink[] = modifiedPositions.map(pos => ({
           source: authorId,
           target: pos.id,
           isAuthorLink: true,
+          changeSize: pos.changeSize,
         }));
+
+        // Calculate stroke width based on change size (min 1, max 5)
+        const getStrokeWidth = (changeSize: number) => {
+          const normalized = Math.log(changeSize + 1) / Math.log(maxChangeSize + 1);
+          return 1 + normalized * 4; // 1-5 range
+        };
+
+        // Calculate glow intensity based on change size
+        const getGlowFilter = (changeSize: number) => {
+          const normalized = Math.log(changeSize + 1) / Math.log(maxChangeSize + 1);
+          const blur = 2 + normalized * 4; // 2-6px blur
+          return `drop-shadow(0 0 ${blur}px ${authorData.color})`;
+        };
 
         const linkSelection = authorLinkGroup.selectAll<SVGLineElement, SimLink>('line.author-link')
           .data(authorLinks, d => `${d.source}-${d.target}`);
 
         linkSelection.exit().remove();
 
+        // Create the links with glow effect
         const enterLinks = linkSelection.enter()
           .append('line')
           .attr('class', 'author-link')
           .attr('stroke', authorData.color)
-          .attr('stroke-opacity', 0.6)
-          .attr('stroke-width', 1.5)
-          .attr('stroke-dasharray', '4,2')
+          .attr('stroke-opacity', 0.5)
+          .attr('stroke-width', d => getStrokeWidth(d.changeSize || 1))
+          .attr('stroke-linecap', 'round')
+          .style('filter', d => getGlowFilter(d.changeSize || 1))
           .attr('x1', authorNode.x || 0)
           .attr('y1', authorNode.y || 0)
           .attr('x2', d => {
@@ -678,13 +710,13 @@ export default function Visualization({
             return target?.y || 0;
           });
 
-        // Fade out author links after a delay
+        // Fade in smoothly
         enterLinks
-          .transition().delay(400).duration(600)
           .attr('stroke-opacity', 0)
-          .remove();
+          .transition().duration(200)
+          .attr('stroke-opacity', 0.5);
 
-        // Cache author link selection for tick updates (only active ones)
+        // Cache author link selection for tick updates (persists until next commit)
         authorLinkSelectionRef.current = authorLinkGroup.selectAll<SVGLineElement, SimLink>('line.author-link');
 
         // Reheat simulation gently
