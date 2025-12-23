@@ -67,6 +67,7 @@ export default function App() {
   const [showSidebar, setShowSidebar] = useState(false);
   const [showFilePanel, setShowFilePanel] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [hoveredNodePath, setHoveredNodePath] = useState<string | null>(null);
 
   const playIntervalRef = useRef<number | null>(null);
   const treeRef = useRef<FileNode>(createFileTree());
@@ -382,6 +383,7 @@ export default function App() {
               onClose={() => setSelectedFile(null)}
               onSeekToCommit={handleSeek}
               onNavigate={(path) => setSelectedFile(path)}
+              onNodeHover={setHoveredNodePath}
             />
           </Suspense>
         )}
@@ -396,6 +398,7 @@ export default function App() {
               modifiedFiles={modifiedFiles}
               onFileSelect={handleFileSelect}
               selectedFile={selectedFile}
+              hoveredNodePath={hoveredNodePath}
             />
           </Suspense>
         </div>

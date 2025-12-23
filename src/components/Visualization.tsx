@@ -11,6 +11,7 @@ interface VisualizationProps {
   modifiedFiles: FileNode[];
   onFileSelect?: (path: string) => void;
   selectedFile?: string | null;
+  hoveredNodePath?: string | null;
 }
 
 interface SimNode extends d3.SimulationNodeDatum {
@@ -46,6 +47,7 @@ export default function Visualization({
   modifiedFiles,
   onFileSelect,
   selectedFile,
+  hoveredNodePath,
 }: VisualizationProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -384,10 +386,10 @@ export default function Visualization({
       .append('g')
       .attr('class', 'node')
       .attr('transform', d => `translate(${d.x ?? 0},${d.y ?? 0})`)
-      .style('cursor', d => d.type === 'file' ? 'pointer' : 'default');
+      .style('cursor', d => d.type === 'file' || d.type === 'directory' ? 'pointer' : 'default');
 
-    // Add click handler for files
-    enter.filter(d => d.type === 'file')
+    // Add click handler for files and directories
+    enter.filter(d => d.type === 'file' || d.type === 'directory')
       .on('click', (event, d) => {
         event.stopPropagation();
         onFileSelect?.(d.path);
@@ -514,6 +516,24 @@ export default function Visualization({
       .attr('stroke-width', d => d.path === selectedFile ? 2.5 : (d.type === 'directory' ? 1 : 0.5))
       .attr('stroke', d => d.path === selectedFile ? '#fff' : (d.type === 'directory' ? '#94a3b8' : '#1e293b'));
   }, [selectedFile]);
+
+  // Update hovered node highlighting (from FileViewer hover)
+  useEffect(() => {
+    if (!nodeSelectionRef.current) return;
+
+    nodeSelectionRef.current.each(function(d) {
+      const circle = d3.select(this).select('circle');
+      const isHovered = d.path === hoveredNodePath;
+      const baseR = d.type === 'directory' ? (d.id === 'root' ? 12 : 8) : 4;
+      const targetR = isHovered ? baseR * 1.5 : baseR;
+
+      circle
+        .transition()
+        .duration(100)
+        .attr('r', targetR)
+        .attr('filter', isHovered ? 'drop-shadow(0 0 8px rgba(255,255,255,0.6))' : null);
+    });
+  }, [hoveredNodePath]);
 
   // Handle file modifications and author nodes
   useEffect(() => {
