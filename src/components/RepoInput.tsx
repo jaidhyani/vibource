@@ -1,23 +1,95 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Github, Loader2, GitBranch, Hash, Settings } from 'lucide-react';
+
+const STORAGE_KEY = 'vibource-last-repo';
+const DEFAULT_REPO = 'luthienresearch/luthien-proxy';
+
+interface StoredRepo {
+  url: string;
+  branch?: string;
+  commitCount?: number;
+}
 
 interface RepoInputProps {
   onSubmit: (repoUrl: string, branch?: string, commitCount?: number) => void;
   isLoading: boolean;
   loadingProgress?: { phase: string; loaded: number; total: number | null };
   error?: string | null;
+  initialRepo?: string;
+  initialBranch?: string;
+  initialCommitCount?: number;
 }
 
-export default function RepoInput({ onSubmit, isLoading, loadingProgress, error }: RepoInputProps) {
-  const [repoUrl, setRepoUrl] = useState('luthienresearch/luthien-proxy');
-  const [branch, setBranch] = useState('');
-  const [commitCount, setCommitCount] = useState('1000');
+export default function RepoInput({
+  onSubmit,
+  isLoading,
+  loadingProgress,
+  error,
+  initialRepo,
+  initialBranch,
+  initialCommitCount
+}: RepoInputProps) {
+  // Load from localStorage or use defaults
+  const [repoUrl, setRepoUrl] = useState(() => {
+    if (initialRepo) return initialRepo;
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed: StoredRepo = JSON.parse(stored);
+        return parsed.url || DEFAULT_REPO;
+      }
+    } catch { /* ignore */ }
+    return DEFAULT_REPO;
+  });
+
+  const [branch, setBranch] = useState(() => {
+    if (initialBranch) return initialBranch;
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed: StoredRepo = JSON.parse(stored);
+        return parsed.branch || '';
+      }
+    } catch { /* ignore */ }
+    return '';
+  });
+
+  const [commitCount, setCommitCount] = useState(() => {
+    if (initialCommitCount) return String(initialCommitCount);
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed: StoredRepo = JSON.parse(stored);
+        return String(parsed.commitCount || 1000);
+      }
+    } catch { /* ignore */ }
+    return '1000';
+  });
+
   const [showOptions, setShowOptions] = useState(false);
+
+  // Update from props if they change (e.g., from URL params)
+  useEffect(() => {
+    if (initialRepo) setRepoUrl(initialRepo);
+    if (initialBranch) setBranch(initialBranch);
+    if (initialCommitCount) setCommitCount(String(initialCommitCount));
+  }, [initialRepo, initialBranch, initialCommitCount]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (repoUrl.trim()) {
       const count = parseInt(commitCount, 10) || 1000;
+
+      // Save to localStorage
+      try {
+        const toStore: StoredRepo = {
+          url: repoUrl.trim(),
+          branch: branch.trim() || undefined,
+          commitCount: count,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+      } catch { /* ignore storage errors */ }
+
       onSubmit(repoUrl.trim(), branch.trim() || undefined, count);
     }
   };
