@@ -7,6 +7,7 @@ interface VisualizationProps {
   fileTree: FileNode;
   authors: Map<string, Author>;
   currentCommit: Commit | null;
+  currentCommitIndex?: number;
   modifiedFiles: FileNode[];
   onFileSelect?: (path: string) => void;
   selectedFile?: string | null;
@@ -16,21 +17,31 @@ interface SimNode extends d3.SimulationNodeDatum {
   id: string;
   name: string;
   path: string;
-  type: 'file' | 'directory';
+  type: 'file' | 'directory' | 'author';
   color?: string;
   depth: number;
   parentId?: string;
+  // Author-specific properties
+  email?: string;
+  lastActiveIndex?: number;
+  targetX?: number;
+  targetY?: number;
 }
 
 interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   source: SimNode | string;
   target: SimNode | string;
+  isAuthorLink?: boolean;
 }
+
+// Number of commits of inactivity before removing an author
+const AUTHOR_INACTIVITY_THRESHOLD = 15;
 
 export default function Visualization({
   fileTree,
   authors,
   currentCommit,
+  currentCommitIndex = 0,
   modifiedFiles,
   onFileSelect,
   selectedFile,
@@ -43,6 +54,7 @@ export default function Visualization({
   // Persistent refs for D3 elements
   const simulationRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
   const nodesRef = useRef<Map<string, SimNode>>(new Map());
+  const authorNodesRef = useRef<Map<string, SimNode>>(new Map());
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const initializedRef = useRef(false);
@@ -50,6 +62,8 @@ export default function Visualization({
   // Cached selections for performance
   const nodeSelectionRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
   const linkSelectionRef = useRef<d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null>(null);
+  const authorSelectionRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
+  const authorLinkSelectionRef = useRef<d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null>(null);
 
   // Throttle tick handler to ~30fps for performance
   const lastTickRef = useRef(0);
@@ -65,6 +79,8 @@ export default function Visualization({
 
     const nodeSelection = nodeSelectionRef.current;
     const linkSelection = linkSelectionRef.current;
+    const authorSelection = authorSelectionRef.current;
+    const authorLinkSelection = authorLinkSelectionRef.current;
 
     if (linkSelection) {
       linkSelection
@@ -77,6 +93,18 @@ export default function Visualization({
     if (nodeSelection) {
       nodeSelection.attr('transform', d => `translate(${d.x},${d.y})`);
     }
+
+    if (authorSelection) {
+      authorSelection.attr('transform', d => `translate(${d.x},${d.y})`);
+    }
+
+    if (authorLinkSelection) {
+      authorLinkSelection
+        .attr('x1', d => (d.source as SimNode).x!)
+        .attr('y1', d => (d.source as SimNode).y!)
+        .attr('x2', d => (d.target as SimNode).x!)
+        .attr('y2', d => (d.target as SimNode).y!);
+    }
   }, []);
 
   // Handle visibility change - clean up when tab hidden, restore when visible
@@ -88,8 +116,8 @@ export default function Visualization({
       } else {
         // Tab visible - clean up stale elements and restart simulation
         if (gRef.current) {
-          // Remove all author badges (they may be in weird states)
-          gRef.current.select('g.authors').selectAll('*').remove();
+          // Remove transient author links (they may be in weird states)
+          gRef.current.select('g.author-links').selectAll('*').remove();
           // Restart simulation to let it settle
           if (simulationRef.current) {
             simulationRef.current.alpha(0.1).restart();
@@ -147,18 +175,55 @@ export default function Visualization({
     // Center the view - translate so (0,0) is at center of viewport
     svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2).scale(0.8));
 
-    // Create layer groups
-    g.append('g').attr('class', 'links');
-    g.append('g').attr('class', 'nodes');
-    g.append('g').attr('class', 'authors');
+    // Create layer groups (order matters: bottom to top)
+    g.append('g').attr('class', 'links');           // File/directory tree links
+    g.append('g').attr('class', 'author-links');    // Transient author-to-file links
+    g.append('g').attr('class', 'nodes');           // File and directory nodes
+    g.append('g').attr('class', 'authors');         // Author nodes (on top)
+
+    // Custom force for author positioning - gently attracts to target with damping
+    const authorPositionForce = () => {
+      let nodes: SimNode[] = [];
+
+      const force = (alpha: number) => {
+        for (const node of nodes) {
+          if (node.type === 'author' && node.targetX !== undefined && node.targetY !== undefined) {
+            // Very gentle attraction to target position
+            const dx = node.targetX - (node.x || 0);
+            const dy = node.targetY - (node.y || 0);
+            const strength = 0.02 * alpha; // Gentle pull
+            node.vx = (node.vx || 0) + dx * strength;
+            node.vy = (node.vy || 0) + dy * strength;
+            // Apply extra damping to author velocity for smooth motion
+            node.vx! *= 0.85;
+            node.vy! *= 0.85;
+          }
+        }
+      };
+
+      force.initialize = (n: SimNode[]) => { nodes = n; };
+      return force;
+    };
 
     // Create simulation with smooth settling - runs continuously until naturally stable
     const simulation = d3.forceSimulation<SimNode>([])
       .force('link', d3.forceLink<SimNode, SimLink>([]).id(d => d.id).distance(30).strength(0.4))
-      .force('charge', d3.forceManyBody<SimNode>().strength(d => d.type === 'directory' ? -80 : -15).distanceMax(200))
+      .force('charge', d3.forceManyBody<SimNode>().strength(d => {
+        if (d.type === 'author') return -30; // Authors repel less
+        if (d.type === 'directory') return -80;
+        return -15;
+      }).distanceMax(200))
       .force('center', d3.forceCenter(0, 0).strength(0.02))
-      .force('collision', d3.forceCollide<SimNode>().radius(d => d.type === 'directory' ? 14 : 6).iterations(2))
-      .force('radial', d3.forceRadial<SimNode>(d => d.depth * 60, 0, 0).strength(0.1))
+      .force('collision', d3.forceCollide<SimNode>().radius(d => {
+        if (d.type === 'author') return 18; // Author collision radius (slightly smaller to yield)
+        if (d.type === 'directory') return 14;
+        return 6;
+      }).iterations(2).strength(0.7)) // Moderate collision strength
+      .force('radial', d3.forceRadial<SimNode>(d => {
+        if (d.type === 'author') return 0; // Authors don't follow radial
+        return d.depth * 60;
+      }, 0, 0).strength(d => d.type === 'author' ? 0 : 0.1))
+      .force('authorPosition', authorPositionForce())
       .velocityDecay(0.35) // Smooth motion - lower = more momentum
       .alphaDecay(0.02) // Slow cooling - allows full settling
       .alphaMin(0.001); // Stop when essentially stable
@@ -428,21 +493,27 @@ export default function Visualization({
       .attr('stroke', d => d.path === selectedFile ? '#fff' : (d.type === 'directory' ? '#94a3b8' : '#1e293b'));
   }, [selectedFile]);
 
-  // Handle file modifications (highlight animations) - simplified
+  // Handle file modifications and author nodes
   useEffect(() => {
-    if (!gRef.current || modifiedFiles.length === 0) return;
+    if (!gRef.current || !simulationRef.current) return;
 
     const g = gRef.current;
     const nodeMap = nodesRef.current;
+    const authorNodes = authorNodesRef.current;
+    const simulation = simulationRef.current;
     const nodeGroup = g.select<SVGGElement>('g.nodes');
+    const authorGroup = g.select<SVGGElement>('g.authors');
+    const authorLinkGroup = g.select<SVGGElement>('g.author-links');
 
-    const modifiedPositions: { x: number; y: number }[] = [];
+    // Collect modified file positions for author targeting
+    const modifiedPositions: { x: number; y: number; id: string }[] = [];
 
+    // Animate file modifications
     modifiedFiles.forEach(file => {
       const simNode = nodeMap.get(file.id);
       if (!simNode || simNode.x === undefined || simNode.y === undefined) return;
 
-      modifiedPositions.push({ x: simNode.x, y: simNode.y });
+      modifiedPositions.push({ x: simNode.x, y: simNode.y, id: file.id });
 
       const nodeEl = nodeGroup.selectAll<SVGGElement, SimNode>('g.node')
         .filter(d => d.id === file.id);
@@ -465,16 +536,162 @@ export default function Visualization({
         .attr('fill', file.status === 'removed' ? '#ef4444' : (file.color || '#8da0cb'));
     });
 
-    // Show author badge
+    // Handle author node for current commit
     if (currentCommit && modifiedPositions.length > 0) {
-      const author = authors.get(currentCommit.author.email);
-      if (author) {
+      const authorData = authors.get(currentCommit.author.email);
+      if (authorData) {
+        const authorId = `author-${currentCommit.author.email}`;
+        let authorNode = authorNodes.get(authorId);
+
+        // Calculate center of gravity of modified files
         const avgX = modifiedPositions.reduce((sum, p) => sum + p.x, 0) / modifiedPositions.length;
         const avgY = modifiedPositions.reduce((sum, p) => sum + p.y, 0) / modifiedPositions.length;
-        showAuthorBadge(g, author, avgX, avgY);
+
+        if (!authorNode) {
+          // Create new author node - start near the modified files
+          authorNode = {
+            id: authorId,
+            name: authorData.name,
+            path: authorData.email,
+            type: 'author',
+            color: authorData.color,
+            depth: 0,
+            email: authorData.email,
+            lastActiveIndex: currentCommitIndex,
+            targetX: avgX,
+            targetY: avgY,
+            x: avgX + (Math.random() - 0.5) * 50,
+            y: avgY + (Math.random() - 0.5) * 50,
+            vx: 0,
+            vy: 0,
+          };
+          authorNodes.set(authorId, authorNode);
+        } else {
+          // Update existing author
+          authorNode.lastActiveIndex = currentCommitIndex;
+          authorNode.targetX = avgX;
+          authorNode.targetY = avgY;
+          authorNode.color = authorData.color;
+        }
+
+        // Remove inactive authors
+        const toRemove: string[] = [];
+        authorNodes.forEach((node, id) => {
+          const inactiveFor = currentCommitIndex - (node.lastActiveIndex || 0);
+          if (inactiveFor > AUTHOR_INACTIVITY_THRESHOLD) {
+            toRemove.push(id);
+          }
+        });
+        toRemove.forEach(id => authorNodes.delete(id));
+
+        // Get all file/dir nodes and active author nodes
+        const fileNodes = Array.from(nodeMap.values());
+        const activeAuthorNodes = Array.from(authorNodes.values());
+        const allNodes = [...fileNodes, ...activeAuthorNodes];
+
+        // Update simulation with all nodes (including authors)
+        simulation.nodes(allNodes);
+
+        // Update DOM - Author nodes
+        const authorSelection = authorGroup.selectAll<SVGGElement, SimNode>('g.author-node')
+          .data(activeAuthorNodes, d => d.id);
+
+        // Remove old authors with fade
+        authorSelection.exit()
+          .transition().duration(300)
+          .style('opacity', 0)
+          .remove();
+
+        // Add new authors
+        const enterAuthors = authorSelection.enter()
+          .append('g')
+          .attr('class', 'author-node')
+          .attr('transform', d => `translate(${d.x ?? 0},${d.y ?? 0})`)
+          .style('opacity', 0);
+
+        // Author circle
+        enterAuthors.append('circle')
+          .attr('r', 16)
+          .attr('fill', d => d.color || '#6366f1')
+          .attr('stroke', '#fff')
+          .attr('stroke-width', 2)
+          .style('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))');
+
+        // Author initial letter
+        enterAuthors.append('text')
+          .attr('text-anchor', 'middle')
+          .attr('dy', 5)
+          .attr('fill', '#fff')
+          .attr('font-size', '11px')
+          .attr('font-weight', 'bold')
+          .attr('pointer-events', 'none')
+          .text(d => d.name.charAt(0).toUpperCase());
+
+        // Author name label below
+        enterAuthors.append('text')
+          .attr('class', 'author-label')
+          .attr('text-anchor', 'middle')
+          .attr('dy', 30)
+          .attr('fill', '#94a3b8')
+          .attr('font-size', '9px')
+          .attr('pointer-events', 'none')
+          .text(d => d.name.length > 12 ? d.name.slice(0, 10) + '..' : d.name);
+
+        // Fade in
+        enterAuthors.transition().duration(300).style('opacity', 1);
+
+        // Update existing author colors
+        authorSelection
+          .select('circle')
+          .attr('fill', d => d.color || '#6366f1');
+
+        // Cache author selection
+        authorSelectionRef.current = authorGroup.selectAll<SVGGElement, SimNode>('g.author-node');
+
+        // Draw transient edges from author to modified files
+        const authorLinks: SimLink[] = modifiedPositions.map(pos => ({
+          source: authorId,
+          target: pos.id,
+          isAuthorLink: true,
+        }));
+
+        const linkSelection = authorLinkGroup.selectAll<SVGLineElement, SimLink>('line.author-link')
+          .data(authorLinks, d => `${d.source}-${d.target}`);
+
+        linkSelection.exit().remove();
+
+        const enterLinks = linkSelection.enter()
+          .append('line')
+          .attr('class', 'author-link')
+          .attr('stroke', authorData.color)
+          .attr('stroke-opacity', 0.6)
+          .attr('stroke-width', 1.5)
+          .attr('stroke-dasharray', '4,2')
+          .attr('x1', authorNode.x || 0)
+          .attr('y1', authorNode.y || 0)
+          .attr('x2', d => {
+            const target = nodeMap.get(d.target as string);
+            return target?.x || 0;
+          })
+          .attr('y2', d => {
+            const target = nodeMap.get(d.target as string);
+            return target?.y || 0;
+          });
+
+        // Fade out author links after a delay
+        enterLinks
+          .transition().delay(400).duration(600)
+          .attr('stroke-opacity', 0)
+          .remove();
+
+        // Cache author link selection for tick updates (only active ones)
+        authorLinkSelectionRef.current = authorLinkGroup.selectAll<SVGLineElement, SimLink>('line.author-link');
+
+        // Reheat simulation gently
+        simulation.alpha(0.15).restart();
       }
     }
-  }, [modifiedFiles, authors, currentCommit]);
+  }, [modifiedFiles, authors, currentCommit, currentCommitIndex]);
 
   return (
     <div ref={containerRef} className="visualization-container">
@@ -501,42 +718,3 @@ export default function Visualization({
   );
 }
 
-function showAuthorBadge(
-  g: d3.Selection<SVGGElement, unknown, null, undefined>,
-  author: Author,
-  x: number,
-  y: number
-) {
-  const authorGroup = g.select<SVGGElement>('g.authors');
-
-  // Limit badge count to prevent accumulation
-  const badges = authorGroup.selectAll('.author-badge');
-  if (badges.size() > 5) {
-    badges.filter((_, i) => i < badges.size() - 5).remove();
-  }
-
-  const badge = authorGroup.append('g')
-    .attr('class', 'author-badge')
-    .attr('transform', `translate(${x + 20}, ${y - 20})`)
-    .style('opacity', 0);
-
-  badge.append('circle')
-    .attr('r', 12)
-    .attr('fill', author.color)
-    .attr('stroke', '#fff')
-    .attr('stroke-width', 1.5);
-
-  badge.append('text')
-    .attr('text-anchor', 'middle')
-    .attr('dy', 4)
-    .attr('fill', '#fff')
-    .attr('font-size', '10px')
-    .attr('font-weight', 'bold')
-    .text(author.name.charAt(0).toUpperCase());
-
-  badge.transition().duration(100).style('opacity', 1);
-
-  badge.transition().delay(600).duration(200)
-    .style('opacity', 0)
-    .remove();
-}
