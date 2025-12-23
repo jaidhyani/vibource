@@ -238,7 +238,6 @@ export default function App() {
             authors={authors}
             currentCommit={currentCommit}
             modifiedFiles={modifiedFiles}
-            isPlaying={isPlaying}
             onFileSelect={handleFileSelect}
             selectedFile={selectedFile}
           />

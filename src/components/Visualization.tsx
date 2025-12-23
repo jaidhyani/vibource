@@ -8,7 +8,6 @@ interface VisualizationProps {
   authors: Map<string, Author>;
   currentCommit: Commit | null;
   modifiedFiles: FileNode[];
-  isPlaying: boolean;
   onFileSelect?: (path: string) => void;
   selectedFile?: string | null;
 }
@@ -33,7 +32,6 @@ export default function Visualization({
   authors,
   currentCommit,
   modifiedFiles,
-  isPlaying,
   onFileSelect,
   selectedFile,
 }: VisualizationProps) {
@@ -52,11 +50,18 @@ export default function Visualization({
   const nodeSelectionRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
   const linkSelectionRef = useRef<d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null>(null);
 
-  // Track simulation stop timeout
-  const simStopTimeoutRef = useRef<number | null>(null);
+  // Throttle tick handler to ~30fps for performance
+  const lastTickRef = useRef(0);
+  const TICK_INTERVAL = 1000 / 30; // 30fps
 
-  // Render function - updates DOM immediately (defined early for use in effects)
-  const renderGraph = useCallback(() => {
+  // Render function - updates DOM (throttled when called from simulation tick)
+  const renderGraph = useCallback((forceRender = false) => {
+    const now = performance.now();
+    if (!forceRender && now - lastTickRef.current < TICK_INTERVAL) {
+      return; // Skip this frame
+    }
+    lastTickRef.current = now;
+
     const nodeSelection = nodeSelectionRef.current;
     const linkSelection = linkSelectionRef.current;
 
@@ -77,19 +82,18 @@ export default function Visualization({
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // Tab hidden - stop simulation and cancel pending work
+        // Tab hidden - stop simulation
         simulationRef.current?.stop();
-        if (simStopTimeoutRef.current) {
-          clearTimeout(simStopTimeoutRef.current);
-          simStopTimeoutRef.current = null;
-        }
       } else {
-        // Tab visible - clean up stale elements and re-render
+        // Tab visible - clean up stale elements and restart simulation
         if (gRef.current) {
           // Remove all author badges (they may be in weird states)
           gRef.current.select('g.authors').selectAll('*').remove();
-          // Re-render current state
-          renderGraph();
+          // Restart simulation to let it settle
+          if (simulationRef.current) {
+            simulationRef.current.alpha(0.1).restart();
+          }
+          renderGraph(true);
         }
       }
     };
@@ -144,23 +148,25 @@ export default function Visualization({
     g.append('g').attr('class', 'nodes');
     g.append('g').attr('class', 'authors');
 
-    // Create simulation with very fast settling
+    // Create simulation with smooth settling - runs continuously until naturally stable
     const simulation = d3.forceSimulation<SimNode>([])
-      .force('link', d3.forceLink<SimNode, SimLink>([]).id(d => d.id).distance(25).strength(0.3))
-      .force('charge', d3.forceManyBody<SimNode>().strength(d => d.type === 'directory' ? -50 : -10).distanceMax(150))
-      .force('center', d3.forceCenter(0, 0).strength(0.01))
-      .force('collision', d3.forceCollide<SimNode>().radius(d => d.type === 'directory' ? 12 : 5).iterations(1))
-      .force('radial', d3.forceRadial<SimNode>(d => d.depth * 50, 0, 0).strength(0.15))
-      .velocityDecay(0.6) // Very fast settling
-      .alphaDecay(0.1) // Very fast cooling
-      .alphaMin(0.01);
+      .force('link', d3.forceLink<SimNode, SimLink>([]).id(d => d.id).distance(30).strength(0.4))
+      .force('charge', d3.forceManyBody<SimNode>().strength(d => d.type === 'directory' ? -80 : -15).distanceMax(200))
+      .force('center', d3.forceCenter(0, 0).strength(0.02))
+      .force('collision', d3.forceCollide<SimNode>().radius(d => d.type === 'directory' ? 14 : 6).iterations(2))
+      .force('radial', d3.forceRadial<SimNode>(d => d.depth * 60, 0, 0).strength(0.1))
+      .velocityDecay(0.35) // Smooth motion - lower = more momentum
+      .alphaDecay(0.02) // Slow cooling - allows full settling
+      .alphaMin(0.001); // Stop when essentially stable
+
+    // Set up tick handler once
+    simulation.on('tick', renderGraph);
 
     simulationRef.current = simulation;
     initializedRef.current = true;
 
     return () => {
       simulation.stop();
-      if (simStopTimeoutRef.current) clearTimeout(simStopTimeoutRef.current);
     };
   }, [dimensions]);
 
@@ -331,29 +337,30 @@ export default function Visualization({
     linkSelectionRef.current = linkGroup.selectAll<SVGLineElement, SimLink>('line');
 
     // Render immediately with current positions
-    renderGraph();
+    renderGraph(true);
 
-    // Clear any pending simulation stop
-    if (simStopTimeoutRef.current) {
-      clearTimeout(simStopTimeoutRef.current);
-      simStopTimeoutRef.current = null;
+    // Determine how much to reheat the simulation based on changes
+    // More new nodes = more energy needed to settle them
+    const newNodeCount = newNodes.filter(n => !existingNodes.has(n.id)).length;
+    const hasChanges = newNodeCount > 0 || newNodes.length !== existingNodes.size;
+
+    if (hasChanges) {
+      // Proportional reheat: more new nodes = higher alpha
+      // Base alpha ensures some settling, scales up with more nodes
+      const baseAlpha = 0.05;
+      const perNodeAlpha = 0.01;
+      const maxAlpha = 0.3;
+      const targetAlpha = Math.min(maxAlpha, baseAlpha + newNodeCount * perNodeAlpha);
+
+      // Only increase alpha, never decrease it if simulation is already running
+      const currentAlpha = simulation.alpha();
+      if (targetAlpha > currentAlpha) {
+        simulation.alpha(targetAlpha);
+      }
+      simulation.restart();
     }
 
-    // During playback: very brief simulation, then stop
-    // When paused: let simulation run longer
-    const simDuration = isPlaying ? 100 : 500;
-    const alpha = isPlaying ? 0.05 : 0.15;
-
-    simulation.on('tick', renderGraph);
-    simulation.alpha(alpha).restart();
-
-    // Force stop simulation after timeout
-    simStopTimeoutRef.current = window.setTimeout(() => {
-      simulation.stop();
-      renderGraph(); // Final render
-    }, simDuration);
-
-  }, [fileTree, isPlaying, renderGraph, onFileSelect]);
+  }, [fileTree, renderGraph, onFileSelect]);
 
   // Update selected file highlighting
   useEffect(() => {
