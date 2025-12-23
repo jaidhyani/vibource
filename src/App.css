@@ -1678,6 +1678,8 @@
 }
 
 /* ========== RESPONSIVE ========== */
+
+/* Tablet breakpoint */
 @media (max-width: 768px) {
   .repo-input-card {
     padding: 24px;
@@ -1687,21 +1689,261 @@
     font-size: 2rem;
   }
 
-  .controls-main {
-    flex-wrap: wrap;
+  .stats-panel {
+    width: 100%;
   }
 
-  .timeline-container {
-    flex-wrap: wrap;
+  /* Header adjustments */
+  .app-header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .header-logo {
+    padding: 6px 10px;
+  }
+
+  .logo-text {
+    font-size: 1rem;
+  }
+
+  .repo-badge {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    max-width: 150px;
+  }
+
+  .branch-badge {
+    display: none;
+  }
+
+  .header-actions {
+    gap: 4px;
+  }
+
+  .sidebar-toggle-label,
+  .file-panel-btn-label {
+    display: none;
+  }
+
+  .sidebar-toggle-btn,
+  .file-panel-btn {
+    padding: 8px;
+  }
+
+  /* Controls section - stacked layout */
+  .controls {
+    padding: 12px 16px;
+  }
+
+  .controls-main {
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .controls-buttons {
+    order: 1;
+  }
+
+  .control-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .control-btn.play-btn {
+    width: 48px;
+    height: 48px;
+  }
+
+  .speed-control {
+    order: 2;
+    width: 100%;
     justify-content: center;
+    padding: 6px 12px;
+  }
+
+  .speed-slider-container {
+    flex: 1;
+    max-width: 150px;
+  }
+
+  .speed-display {
+    min-width: 80px;
+  }
+
+  .speed-unit {
+    font-size: 0.65rem;
+  }
+
+  /* Timeline - full width and stacked */
+  .timeline-container {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .timeline-info {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-width: auto;
+    order: 1;
   }
 
   .timeline-slider {
-    order: 3;
     width: 100%;
+    order: 2;
+    height: 12px;
+  }
+
+  .timeline-slider input[type="range"] {
+    height: 12px;
+  }
+
+  .timeline-slider input[type="range"]::-webkit-slider-thumb {
+    width: 24px;
+    height: 24px;
+  }
+
+  .slider-progress {
+    height: 12px;
+  }
+
+  .timeline-commits {
+    order: 3;
+    min-width: auto;
+    justify-content: center;
+  }
+
+  .timeline-commits span:first-child {
+    font-size: 1rem;
+  }
+
+  .timeline-commits span:nth-child(3) {
+    font-size: 0.8rem;
+  }
+}
+
+/* Mobile breakpoint */
+@media (max-width: 480px) {
+  .app-header {
+    padding: 6px 10px;
+  }
+
+  .repo-badge {
+    display: none;
+  }
+
+  .icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .controls {
+    padding: 10px 12px;
+  }
+
+  .controls-main {
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .control-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .control-btn.play-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .control-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .control-btn.play-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .speed-control {
+    padding: 4px 10px;
+    gap: 8px;
+  }
+
+  .speed-slider-container {
+    max-width: 100px;
+  }
+
+  .speed-value {
+    font-size: 0.875rem;
+  }
+
+  .speed-display {
+    min-width: 70px;
+  }
+
+  .timeline-container {
+    gap: 8px;
+  }
+
+  .timeline-info {
+    font-size: 0.8rem;
+  }
+
+  .timeline-date {
+    font-size: 0.75rem;
+  }
+
+  .timeline-time {
+    font-size: 0.65rem;
+  }
+
+  .timeline-slider {
+    height: 16px;
+  }
+
+  .timeline-slider input[type="range"] {
+    height: 16px;
+  }
+
+  .timeline-slider input[type="range"]::-webkit-slider-thumb {
+    width: 28px;
+    height: 28px;
+    border-width: 2px;
+  }
+
+  .slider-progress {
+    height: 16px;
+  }
+
+  .timeline-commits {
+    gap: 3px;
+  }
+
+  .timeline-commits span:first-child {
+    font-size: 0.9rem;
+  }
+
+  .timeline-commits span:nth-child(3) {
+    font-size: 0.75rem;
+  }
+
+  .timeline-commits .label {
+    font-size: 0.65rem;
+  }
+
+  /* Sidebar adjustments for mobile */
+  .commit-sidebar {
+    width: 280px;
   }
 
   .stats-panel {
-    width: 100%;
+    right: 8px;
+    top: 60px;
+    width: calc(100% - 16px);
+    max-width: none;
   }
 }

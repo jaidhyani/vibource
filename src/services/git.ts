@@ -2,6 +2,7 @@ import git from 'isomorphic-git';
 import http from 'isomorphic-git/http/web';
 import LightningFS from '@isomorphic-git/lightning-fs';
 import type { Commit, FileChange, RepoInfo } from '../types';
+import { getCachedCommits, cacheCommits } from './cache';
 
 const CORS_PROXY = 'https://cors.isomorphic-git.org';
 
@@ -40,6 +41,28 @@ export function parseRepoUrl(url: string): RepoInfo | null {
 
 let diffComputationAbort: (() => void) | null = null;
 
+/**
+ * Try to get the head SHA from the remote without cloning
+ */
+async function getRemoteHeadSha(
+  repoUrl: string,
+  branch: string
+): Promise<string | null> {
+  try {
+    const refs = await git.listServerRefs({
+      http,
+      url: repoUrl,
+      corsProxy: CORS_PROXY,
+      prefix: `refs/heads/${branch}`,
+    });
+
+    const branchRef = refs.find(ref => ref.ref === `refs/heads/${branch}`);
+    return branchRef?.oid || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchCommitsWithFiles(
   repoInfo: RepoInfo,
   maxCommits: number = 1000,
@@ -51,9 +74,51 @@ export async function fetchCommitsWithFiles(
   }
 
   const repoId = `${repoInfo.owner}-${repoInfo.repo}`;
+  const repoUrl = `https://github.com/${repoInfo.owner}/${repoInfo.repo}.git`;
+
+  onProgress?.('Checking cache...', 0, null);
+
+  // Try to get cached commits first
+  // Check the remote head SHA to validate cache
+  let headSha = await getRemoteHeadSha(repoUrl, repoInfo.branch);
+
+  // If we couldn't get head SHA for main, try master
+  if (!headSha && repoInfo.branch === 'main') {
+    headSha = await getRemoteHeadSha(repoUrl, 'master');
+    if (headSha) {
+      repoInfo.branch = 'master';
+    }
+  }
+
+  // Try to use cached commits
+  if (headSha) {
+    const cachedCommits = await getCachedCommits(
+      repoInfo.owner,
+      repoInfo.repo,
+      repoInfo.branch,
+      headSha
+    );
+
+    if (cachedCommits && cachedCommits.length > 0) {
+      // Verify the cache has file data (not just empty arrays)
+      const hasFileData = cachedCommits.some(c => c.files && c.files.length > 0);
+
+      if (hasFileData) {
+        onProgress?.('Loaded from cache!', cachedCommits.length, cachedCommits.length);
+
+        // Still need to clone for file content viewing
+        // Do this in background after returning
+        cloneRepoInBackground(repoInfo, repoId, repoUrl, maxCommits);
+
+        // Return cached commits, truncated to maxCommits
+        return cachedCommits.slice(0, maxCommits);
+      }
+    }
+  }
+
+  // Cache miss - proceed with full clone and diff computation
   const lfs = getFs(repoId);
   const dir = repoDir!;
-  const repoUrl = `https://github.com/${repoInfo.owner}/${repoInfo.repo}.git`;
 
   onProgress?.('Connecting...', 0, null);
 
@@ -144,12 +209,48 @@ export async function fetchCommitsWithFiles(
 
   onProgress?.('Ready!', commits.length, commits.length);
 
-  // Continue processing remaining commits in background
+  // Continue processing remaining commits in background, then cache
   if (commits.length > initialBatchCount) {
-    startBackgroundDiffComputation(lfs, dir, commits, initialBatchCount, prevTreeOid);
+    startBackgroundDiffComputation(lfs, dir, commits, initialBatchCount, prevTreeOid, repoInfo);
+  } else {
+    // All commits processed, cache now
+    cacheCommits(repoInfo.owner, repoInfo.repo, repoInfo.branch, commits);
   }
 
   return commits;
+}
+
+/**
+ * Clone repo in background for file content viewing (when using cached commits)
+ */
+async function cloneRepoInBackground(
+  repoInfo: RepoInfo,
+  repoId: string,
+  repoUrl: string,
+  maxCommits: number
+): Promise<void> {
+  // Small delay to not block UI
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  const lfs = getFs(repoId);
+  const dir = repoDir!;
+
+  try {
+    await git.clone({
+      fs: lfs,
+      http,
+      dir,
+      url: repoUrl,
+      corsProxy: CORS_PROXY,
+      ref: repoInfo.branch,
+      singleBranch: true,
+      depth: maxCommits + 1,
+      noCheckout: true,
+    });
+    console.log('Background clone completed for file viewing');
+  } catch (error) {
+    console.warn('Background clone failed:', error);
+  }
 }
 
 async function startBackgroundDiffComputation(
@@ -157,7 +258,8 @@ async function startBackgroundDiffComputation(
   dir: string,
   commits: Commit[],
   startIndex: number,
-  initialPrevTreeOid: string | null
+  initialPrevTreeOid: string | null,
+  repoInfo?: RepoInfo
 ): Promise<void> {
   let aborted = false;
   diffComputationAbort = () => { aborted = true; };
@@ -186,6 +288,11 @@ async function startBackgroundDiffComputation(
     if (i % 10 === 0) {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
+  }
+
+  // Cache all commits after background computation completes
+  if (!aborted && repoInfo) {
+    cacheCommits(repoInfo.owner, repoInfo.repo, repoInfo.branch, commits);
   }
 }
 
