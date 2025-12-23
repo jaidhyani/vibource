@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { FileNode, Author, Commit, RepoInfo } from './types';
-import { parseRepoUrl, fetchCommitsWithFiles, getDefaultBranch } from './services/github';
+import { parseRepoUrl, fetchCommitsWithFiles } from './services/git';
 import { createFileTree, applyCommitToTree } from './utils/fileTree';
 import Visualization from './components/Visualization';
 import Controls from './components/Controls';
@@ -30,7 +30,7 @@ export default function App() {
   const authorsRef = useRef<Map<string, Author>>(new Map());
 
   // Handle repo submission
-  const handleRepoSubmit = useCallback(async (repoUrl: string, token?: string) => {
+  const handleRepoSubmit = useCallback(async (repoUrl: string, _token?: string) => {
     const parsed = parseRepoUrl(repoUrl);
     if (!parsed) {
       setError('Invalid repository URL. Use format: owner/repo or full GitHub URL');
@@ -42,16 +42,10 @@ export default function App() {
     setRepoInfo(parsed);
 
     try {
-      // Get default branch if not specified
-      if (parsed.branch === 'main') {
-        const defaultBranch = await getDefaultBranch(parsed, token);
-        parsed.branch = defaultBranch;
-      }
-
-      // Fetch commits with file changes
+      // Fetch commits with file changes (git clone handles branch detection)
       const fetchedCommits = await fetchCommitsWithFiles(
         parsed,
-        token,
+        undefined,
         200, // Max commits
         (loaded, total) => setLoadingProgress({ loaded, total })
       );
