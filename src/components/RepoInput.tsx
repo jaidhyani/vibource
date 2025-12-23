@@ -146,7 +146,7 @@ export default function RepoInput({
                   type="text"
                   value={branch}
                   onChange={(e) => setBranch(e.target.value)}
-                  placeholder="Branch (default: main)"
+                  placeholder="Branch or commit (default: main)"
                   className="repo-input"
                   disabled={isLoading}
                 />

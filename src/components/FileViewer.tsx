@@ -12,6 +12,7 @@ interface FileViewerProps {
   onClose: () => void;
   onSeekToCommit?: (index: number) => void;
   onNavigate?: (path: string) => void;
+  onNodeHover?: (path: string | null) => void;
 }
 
 // Simple language detection for syntax highlighting hints
@@ -208,7 +209,8 @@ export default function FileViewer({
   fileTree,
   onClose,
   onSeekToCommit,
-  onNavigate
+  onNavigate,
+  onNodeHover
 }: FileViewerProps) {
   const [fileContent, setFileContent] = useState<FileContent | null>(null);
   const [previousContent, setPreviousContent] = useState<FileContent | null>(null);
@@ -545,6 +547,8 @@ export default function FileViewer({
                     <button
                       className="directory-item"
                       onClick={() => onNavigate?.(item.path)}
+                      onMouseEnter={() => onNodeHover?.(item.path)}
+                      onMouseLeave={() => onNodeHover?.(null)}
                     >
                       {item.type === 'directory' ? (
                         <Folder size={16} className="directory-item-icon folder" />

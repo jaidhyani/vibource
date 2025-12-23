@@ -118,10 +118,36 @@ export async function fetchCommitsWithFiles(
     files: [],
   }));
 
+  // Process first batch of commits synchronously so visualization can start immediately
+  const INITIAL_BATCH_SIZE = 50;
+  const initialBatchCount = Math.min(INITIAL_BATCH_SIZE, commits.length);
+
+  onProgress?.('Computing file changes...', 0, initialBatchCount);
+
+  let prevTreeOid: string | null = null;
+  for (let i = 0; i < initialBatchCount; i++) {
+    const commit = commits[i];
+    try {
+      const { commit: commitObj } = await git.readCommit({ fs: lfs, dir, oid: commit.sha });
+      const treeOid = commitObj.tree;
+      const files = await diffTreesIncremental(lfs, dir, prevTreeOid, treeOid, '');
+      commit.files = files;
+      prevTreeOid = treeOid;
+    } catch {
+      // Skip failed commits
+    }
+
+    if (i % 10 === 0) {
+      onProgress?.('Computing file changes...', i + 1, initialBatchCount);
+    }
+  }
+
   onProgress?.('Ready!', commits.length, commits.length);
 
-  // Start background diff with incremental tree comparison
-  startBackgroundDiffComputation(lfs, dir, commits);
+  // Continue processing remaining commits in background
+  if (commits.length > initialBatchCount) {
+    startBackgroundDiffComputation(lfs, dir, commits, initialBatchCount, prevTreeOid);
+  }
 
   return commits;
 }
@@ -129,14 +155,16 @@ export async function fetchCommitsWithFiles(
 async function startBackgroundDiffComputation(
   lfs: LightningFS,
   dir: string,
-  commits: Commit[]
+  commits: Commit[],
+  startIndex: number,
+  initialPrevTreeOid: string | null
 ): Promise<void> {
   let aborted = false;
   diffComputationAbort = () => { aborted = true; };
 
-  let prevTreeOid: string | null = null;
+  let prevTreeOid = initialPrevTreeOid;
 
-  for (let i = 0; i < commits.length; i++) {
+  for (let i = startIndex; i < commits.length; i++) {
     if (aborted) break;
 
     const commit = commits[i];
