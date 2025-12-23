@@ -1,4 +1,4 @@
-import { Play, Pause, SkipBack, SkipForward, FastForward, Rewind } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Minus, Plus } from 'lucide-react';
 
 interface ControlsProps {
   isPlaying: boolean;
@@ -25,7 +25,8 @@ export default function Controls({
   onSkipForward,
   currentDate,
 }: ControlsProps) {
-  const speeds = [0.5, 1, 2, 4, 8];
+  // Speed is now commits per second (1-20 range)
+  const speeds = [1, 2, 5, 10, 20];
 
   const formatDate = (date: Date | null) => {
     if (!date) return '--';
@@ -46,6 +47,32 @@ export default function Controls({
 
   const progress = totalCommits > 0 ? (currentCommitIndex / totalCommits) * 100 : 0;
 
+  const decreaseSpeed = () => {
+    const currentIdx = speeds.indexOf(currentSpeed);
+    if (currentIdx > 0) {
+      onSpeedChange(speeds[currentIdx - 1]);
+    } else if (currentIdx === -1) {
+      // Find closest lower speed
+      const lower = speeds.filter(s => s < currentSpeed);
+      if (lower.length > 0) {
+        onSpeedChange(lower[lower.length - 1]);
+      }
+    }
+  };
+
+  const increaseSpeed = () => {
+    const currentIdx = speeds.indexOf(currentSpeed);
+    if (currentIdx >= 0 && currentIdx < speeds.length - 1) {
+      onSpeedChange(speeds[currentIdx + 1]);
+    } else if (currentIdx === -1) {
+      // Find closest higher speed
+      const higher = speeds.filter(s => s > currentSpeed);
+      if (higher.length > 0) {
+        onSpeedChange(higher[0]);
+      }
+    }
+  };
+
   return (
     <div className="controls">
       <div className="controls-main">
@@ -60,11 +87,12 @@ export default function Controls({
           </button>
 
           <button
-            onClick={() => onSpeedChange(Math.max(0.5, currentSpeed / 2))}
+            onClick={decreaseSpeed}
             className="control-btn"
             title="Slower"
+            disabled={currentSpeed <= speeds[0]}
           >
-            <Rewind size={20} />
+            <Minus size={20} />
           </button>
 
           <button
@@ -76,11 +104,12 @@ export default function Controls({
           </button>
 
           <button
-            onClick={() => onSpeedChange(Math.min(8, currentSpeed * 2))}
+            onClick={increaseSpeed}
             className="control-btn"
             title="Faster"
+            disabled={currentSpeed >= speeds[speeds.length - 1]}
           >
-            <FastForward size={20} />
+            <Plus size={20} />
           </button>
 
           <button
@@ -100,9 +129,10 @@ export default function Controls({
               onClick={() => onSpeedChange(speed)}
               className={`speed-btn ${currentSpeed === speed ? 'active' : ''}`}
             >
-              {speed}x
+              {speed}
             </button>
           ))}
+          <span className="speed-label">commits/sec</span>
         </div>
       </div>
 

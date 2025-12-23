@@ -202,6 +202,13 @@
   color: white;
 }
 
+.speed-label {
+  padding: 6px 8px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .timeline-container {
   display: flex;
   align-items: center;
@@ -413,6 +420,13 @@
 
 .token-toggle:hover {
   color: var(--text-secondary);
+}
+
+.options-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0;
 }
 
 .submit-btn {

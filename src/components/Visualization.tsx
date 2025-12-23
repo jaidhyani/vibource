@@ -234,9 +234,16 @@ export default function Visualization({
     const g = gRef.current;
     const nodeMap = nodesRef.current;
 
+    // Track modified positions for author placement
+    const modifiedPositions: { x: number; y: number }[] = [];
+
     modifiedFiles.forEach(file => {
       const simNode = nodeMap.get(file.id);
       if (!simNode) return;
+
+      if (simNode.x !== undefined && simNode.y !== undefined) {
+        modifiedPositions.push({ x: simNode.x, y: simNode.y });
+      }
 
       // Find the DOM node
       const nodeEl = g.selectAll<SVGGElement, SimNode>('g.node')
@@ -261,17 +268,18 @@ export default function Visualization({
         .transition().duration(400)
         .attr('fill', file.status === 'removed' ? '#ef4444' : originalFill)
         .attr('r', originalR);
-
-      // Show author near file
-      const authorKey = file.lastAuthor;
-      if (authorKey && simNode.x !== undefined && simNode.y !== undefined) {
-        const author = authors.get(authorKey);
-        if (author) {
-          showAuthorBadge(g, author, simNode.x, simNode.y);
-        }
-      }
     });
-  }, [modifiedFiles, authors]);
+
+    // Show ONE author badge per commit, positioned near the centroid of modified files
+    if (currentCommit && modifiedPositions.length > 0) {
+      const author = authors.get(currentCommit.author.email);
+      if (author) {
+        const avgX = modifiedPositions.reduce((sum, p) => sum + p.x, 0) / modifiedPositions.length;
+        const avgY = modifiedPositions.reduce((sum, p) => sum + p.y, 0) / modifiedPositions.length;
+        showAuthorBadge(g, author, avgX, avgY);
+      }
+    }
+  }, [modifiedFiles, authors, currentCommit]);
 
   return (
     <div ref={containerRef} className="visualization-container">
