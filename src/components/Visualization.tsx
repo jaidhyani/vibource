@@ -109,8 +109,37 @@ export default function Visualization({
     };
   }, [dimensions]);
 
-  // Memoized tick handler
+  // Throttled tick handler - only update DOM at 30fps max
+  const lastTickRef = useRef(0);
+  const pendingTickRef = useRef<number | null>(null);
+
+  // Cleanup pending animation frame on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingTickRef.current !== null) {
+        cancelAnimationFrame(pendingTickRef.current);
+      }
+    };
+  }, []);
+
   const tickHandler = useCallback(() => {
+    const now = performance.now();
+    const elapsed = now - lastTickRef.current;
+
+    // Throttle to ~30fps (33ms between frames)
+    if (elapsed < 33) {
+      // Schedule an update if we haven't already
+      if (pendingTickRef.current === null) {
+        pendingTickRef.current = requestAnimationFrame(() => {
+          pendingTickRef.current = null;
+          tickHandler();
+        });
+      }
+      return;
+    }
+
+    lastTickRef.current = now;
+
     const nodeSelection = nodeSelectionRef.current;
     const linkSelection = linkSelectionRef.current;
 
