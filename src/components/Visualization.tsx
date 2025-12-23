@@ -340,25 +340,20 @@ export default function Visualization({
     renderGraph(true);
 
     // Determine how much to reheat the simulation based on changes
-    // More new nodes = more energy needed to settle them
     const newNodeCount = newNodes.filter(n => !existingNodes.has(n.id)).length;
-    const hasChanges = newNodeCount > 0 || newNodes.length !== existingNodes.size;
+    const removedNodeCount = existingNodes.size - (newNodes.length - newNodeCount);
+    const totalChanges = newNodeCount + Math.max(0, removedNodeCount);
 
-    if (hasChanges) {
-      // Proportional reheat: more new nodes = higher alpha
-      // Base alpha ensures some settling, scales up with more nodes
-      const baseAlpha = 0.05;
-      const perNodeAlpha = 0.01;
-      const maxAlpha = 0.3;
-      const targetAlpha = Math.min(maxAlpha, baseAlpha + newNodeCount * perNodeAlpha);
+    // Always restart simulation when tree changes to ensure graph updates
+    // Scale alpha based on magnitude of changes
+    const baseAlpha = 0.1; // Minimum alpha to ensure visible settling
+    const perChangeAlpha = 0.005;
+    const maxAlpha = 0.5;
+    const targetAlpha = Math.min(maxAlpha, baseAlpha + totalChanges * perChangeAlpha);
 
-      // Only increase alpha, never decrease it if simulation is already running
-      const currentAlpha = simulation.alpha();
-      if (targetAlpha > currentAlpha) {
-        simulation.alpha(targetAlpha);
-      }
-      simulation.restart();
-    }
+    // Force restart with calculated alpha - don't skip even if "no changes"
+    // because the tree structure might have changed in ways we didn't detect
+    simulation.alpha(targetAlpha).restart();
 
   }, [fileTree, renderGraph, onFileSelect]);
 
