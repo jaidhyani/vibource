@@ -100,11 +100,31 @@ export default function Visualization({
     }
 
     if (authorLinkSelection) {
-      authorLinkSelection
-        .attr('x1', d => (d.source as SimNode).x!)
-        .attr('y1', d => (d.source as SimNode).y!)
-        .attr('x2', d => (d.target as SimNode).x!)
-        .attr('y2', d => (d.target as SimNode).y!);
+      const nodeMap = nodesRef.current;
+      const authorNodeMap = authorNodesRef.current;
+      authorLinkSelection.each(function(d) {
+        const sourceId = typeof d.source === 'string' ? d.source : (d.source as SimNode).id;
+        const targetId = typeof d.target === 'string' ? d.target : (d.target as SimNode).id;
+        const sourceNode = authorNodeMap.get(sourceId) || nodeMap.get(sourceId);
+        const targetNode = nodeMap.get(targetId) || authorNodeMap.get(targetId);
+
+        const line = d3.select(this);
+
+        // Hide link if either endpoint is missing
+        if (!sourceNode || !targetNode ||
+            sourceNode.x === undefined || sourceNode.y === undefined ||
+            targetNode.x === undefined || targetNode.y === undefined) {
+          line.attr('visibility', 'hidden');
+          return;
+        }
+
+        line
+          .attr('visibility', 'visible')
+          .attr('x1', sourceNode.x)
+          .attr('y1', sourceNode.y)
+          .attr('x2', targetNode.x)
+          .attr('y2', targetNode.y);
+      });
     }
   }, []);
 
@@ -526,7 +546,7 @@ export default function Visualization({
       if (!simNode || simNode.x === undefined || simNode.y === undefined) return;
 
       const changeSize = fileSizeMap.get(file.path) || 1;
-      modifiedPositions.push({ x: simNode.x, y: simNode.y, id: file.id, changeSize });
+      modifiedPositions.push({ x: simNode.x, y: simNode.y, id: simNode.id, changeSize });
 
       const nodeEl = nodeGroup.selectAll<SVGGElement, SimNode>('g.node')
         .filter(d => d.id === file.id);
