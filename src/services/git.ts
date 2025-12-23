@@ -286,3 +286,91 @@ async function collectAllFiles(
 export async function getDefaultBranch(repoInfo: RepoInfo): Promise<string> {
   return repoInfo.branch || 'main';
 }
+
+// Maximum file size to load (100KB)
+const MAX_FILE_SIZE = 100 * 1024;
+
+export interface FileContent {
+  content: string;
+  size: number;
+  truncated: boolean;
+  binary: boolean;
+}
+
+/**
+ * Read file content at a specific commit
+ */
+export async function readFileAtCommit(
+  commitSha: string,
+  filePath: string
+): Promise<FileContent | null> {
+  if (!fs || !repoDir) {
+    return null;
+  }
+
+  try {
+    // Get the commit's tree
+    const { commit } = await git.readCommit({ fs, dir: repoDir, oid: commitSha });
+    const treeOid = commit.tree;
+
+    // Walk the tree to find the file
+    const blobOid = await findBlobInTree(fs, repoDir, treeOid, filePath.split('/'));
+    if (!blobOid) {
+      return null;
+    }
+
+    // Read the blob
+    const { blob } = await git.readBlob({ fs, dir: repoDir, oid: blobOid });
+
+    // Check size
+    const size = blob.length;
+    const truncated = size > MAX_FILE_SIZE;
+    const dataToUse = truncated ? blob.slice(0, MAX_FILE_SIZE) : blob;
+
+    // Check if binary (contains null bytes in first 8KB)
+    const checkSize = Math.min(8192, dataToUse.length);
+    let binary = false;
+    for (let i = 0; i < checkSize; i++) {
+      if (dataToUse[i] === 0) {
+        binary = true;
+        break;
+      }
+    }
+
+    if (binary) {
+      return { content: '', size, truncated: false, binary: true };
+    }
+
+    // Decode as UTF-8
+    const decoder = new TextDecoder('utf-8');
+    const content = decoder.decode(dataToUse);
+
+    return { content, size, truncated, binary: false };
+  } catch {
+    return null;
+  }
+}
+
+async function findBlobInTree(
+  lfs: LightningFS,
+  dir: string,
+  treeOid: string,
+  pathParts: string[]
+): Promise<string | null> {
+  if (pathParts.length === 0) return null;
+
+  const tree = await readTreeSafe(lfs, dir, treeOid);
+  const [current, ...rest] = pathParts;
+
+  const entry = tree.find(e => e.path === current);
+  if (!entry) return null;
+
+  if (rest.length === 0) {
+    // This is the file we're looking for
+    return entry.type === 'blob' ? entry.oid : null;
+  }
+
+  // Need to descend into subtree
+  if (entry.type !== 'tree') return null;
+  return findBlobInTree(lfs, dir, entry.oid, rest);
+}
