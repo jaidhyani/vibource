@@ -18,6 +18,7 @@ interface SimNode extends d3.SimulationNodeDatum {
   type: 'file' | 'directory';
   color?: string;
   depth: number;
+  parentId?: string;
 }
 
 interface SimLink extends d3.SimulationLinkDatum<SimNode> {
@@ -30,6 +31,7 @@ export default function Visualization({
   authors,
   currentCommit,
   modifiedFiles,
+  isPlaying,
 }: VisualizationProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -44,6 +46,52 @@ export default function Visualization({
   // Cached selections for performance
   const nodeSelectionRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
   const linkSelectionRef = useRef<d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null>(null);
+
+  // Track simulation stop timeout
+  const simStopTimeoutRef = useRef<number | null>(null);
+
+  // Render function - updates DOM immediately (defined early for use in effects)
+  const renderGraph = useCallback(() => {
+    const nodeSelection = nodeSelectionRef.current;
+    const linkSelection = linkSelectionRef.current;
+
+    if (linkSelection) {
+      linkSelection
+        .attr('x1', d => (d.source as SimNode).x!)
+        .attr('y1', d => (d.source as SimNode).y!)
+        .attr('x2', d => (d.target as SimNode).x!)
+        .attr('y2', d => (d.target as SimNode).y!);
+    }
+
+    if (nodeSelection) {
+      nodeSelection.attr('transform', d => `translate(${d.x},${d.y})`);
+    }
+  }, []);
+
+  // Handle visibility change - clean up when tab hidden, restore when visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab hidden - stop simulation and cancel pending work
+        simulationRef.current?.stop();
+        if (simStopTimeoutRef.current) {
+          clearTimeout(simStopTimeoutRef.current);
+          simStopTimeoutRef.current = null;
+        }
+      } else {
+        // Tab visible - clean up stale elements and re-render
+        if (gRef.current) {
+          // Remove all author badges (they may be in weird states)
+          gRef.current.select('g.authors').selectAll('*').remove();
+          // Re-render current state
+          renderGraph();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [renderGraph]);
 
   // Handle resize with debounce
   useEffect(() => {
@@ -76,7 +124,7 @@ export default function Visualization({
     const g = svg.append('g').attr('class', 'main-group');
     gRef.current = g;
 
-    // Add zoom with passive event listeners
+    // Add zoom
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
       .on('zoom', (event) => {
@@ -91,70 +139,25 @@ export default function Visualization({
     g.append('g').attr('class', 'nodes');
     g.append('g').attr('class', 'authors');
 
-    // Create simulation with performance settings
+    // Create simulation with very fast settling
     const simulation = d3.forceSimulation<SimNode>([])
-      .force('link', d3.forceLink<SimNode, SimLink>([]).id(d => d.id).distance(30).strength(0.5))
-      .force('charge', d3.forceManyBody<SimNode>().strength(d => d.type === 'directory' ? -80 : -15).distanceMax(200))
-      .force('center', d3.forceCenter(0, 0).strength(0.02))
-      .force('collision', d3.forceCollide<SimNode>().radius(d => d.type === 'directory' ? 15 : 6).iterations(1))
-      .force('radial', d3.forceRadial<SimNode>(d => d.depth * 60, 0, 0).strength(0.2))
-      .velocityDecay(0.4) // Faster settling
-      .alphaDecay(0.05); // Faster cooling
+      .force('link', d3.forceLink<SimNode, SimLink>([]).id(d => d.id).distance(25).strength(0.3))
+      .force('charge', d3.forceManyBody<SimNode>().strength(d => d.type === 'directory' ? -50 : -10).distanceMax(150))
+      .force('center', d3.forceCenter(0, 0).strength(0.01))
+      .force('collision', d3.forceCollide<SimNode>().radius(d => d.type === 'directory' ? 12 : 5).iterations(1))
+      .force('radial', d3.forceRadial<SimNode>(d => d.depth * 50, 0, 0).strength(0.15))
+      .velocityDecay(0.6) // Very fast settling
+      .alphaDecay(0.1) // Very fast cooling
+      .alphaMin(0.01);
 
     simulationRef.current = simulation;
     initializedRef.current = true;
 
     return () => {
       simulation.stop();
+      if (simStopTimeoutRef.current) clearTimeout(simStopTimeoutRef.current);
     };
   }, [dimensions]);
-
-  // Throttled tick handler - only update DOM at 30fps max
-  const lastTickRef = useRef(0);
-  const pendingTickRef = useRef<number | null>(null);
-
-  // Cleanup pending animation frame on unmount
-  useEffect(() => {
-    return () => {
-      if (pendingTickRef.current !== null) {
-        cancelAnimationFrame(pendingTickRef.current);
-      }
-    };
-  }, []);
-
-  const tickHandler = useCallback(() => {
-    const now = performance.now();
-    const elapsed = now - lastTickRef.current;
-
-    // Throttle to ~30fps (33ms between frames)
-    if (elapsed < 33) {
-      // Schedule an update if we haven't already
-      if (pendingTickRef.current === null) {
-        pendingTickRef.current = requestAnimationFrame(() => {
-          pendingTickRef.current = null;
-          tickHandler();
-        });
-      }
-      return;
-    }
-
-    lastTickRef.current = now;
-
-    const nodeSelection = nodeSelectionRef.current;
-    const linkSelection = linkSelectionRef.current;
-
-    if (linkSelection) {
-      linkSelection
-        .attr('x1', d => (d.source as SimNode).x!)
-        .attr('y1', d => (d.source as SimNode).y!)
-        .attr('x2', d => (d.target as SimNode).x!)
-        .attr('y2', d => (d.target as SimNode).y!);
-    }
-
-    if (nodeSelection) {
-      nodeSelection.attr('transform', d => `translate(${d.x},${d.y})`);
-    }
-  }, []);
 
   // Update graph when fileTree changes
   useEffect(() => {
@@ -168,23 +171,26 @@ export default function Visualization({
     const allNodes = flattenTree(fileTree);
     const links = getTreeLinks(fileTree);
 
-    // Calculate depths efficiently
+    // Build parent map for positioning new nodes
+    const parentMap = new Map<string, string>();
+    const calcParents = (node: FileNode, parentId?: string) => {
+      if (parentId) parentMap.set(node.id, parentId);
+      node.children?.forEach(c => calcParents(c, node.id));
+    };
+    calcParents(fileTree);
+
+    // Calculate depths
     const depthMap = new Map<string, number>();
     const calcDepth = (node: FileNode, depth: number) => {
       depthMap.set(node.id, depth);
-      if (node.children) {
-        for (const c of node.children) {
-          calcDepth(c, depth + 1);
-        }
-      }
+      node.children?.forEach(c => calcDepth(c, depth + 1));
     };
     calcDepth(fileTree, 0);
 
-    // Build new nodes, preserving positions from existing
+    // Build new nodes, positioning new nodes near their parent
     const newNodes: SimNode[] = allNodes.map(node => {
       const existing = existingNodes.get(node.id);
       if (existing) {
-        // Update existing node properties but keep position
         existing.name = node.name;
         existing.path = node.path;
         existing.type = node.type;
@@ -192,15 +198,40 @@ export default function Visualization({
         existing.depth = depthMap.get(node.id) || 0;
         return existing;
       }
+
+      // New node - position near parent
+      const parentId = parentMap.get(node.id);
+      const parent = parentId ? existingNodes.get(parentId) : null;
+      const depth = depthMap.get(node.id) || 0;
+
+      // Position based on parent or radial layout
+      let x: number, y: number;
+      if (parent && parent.x !== undefined && parent.y !== undefined) {
+        // Position near parent with slight randomness
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 20 + Math.random() * 15;
+        x = parent.x + Math.cos(angle) * dist;
+        y = parent.y + Math.sin(angle) * dist;
+      } else {
+        // Radial position based on depth
+        const angle = Math.random() * Math.PI * 2;
+        const radius = depth * 50;
+        x = Math.cos(angle) * radius;
+        y = Math.sin(angle) * radius;
+      }
+
       return {
         id: node.id,
         name: node.name,
         path: node.path,
         type: node.type,
         color: node.color,
-        depth: depthMap.get(node.id) || 0,
-        x: (Math.random() - 0.5) * 50,
-        y: (Math.random() - 0.5) * 50,
+        depth,
+        parentId,
+        x,
+        y,
+        vx: 0,
+        vy: 0,
       };
     });
 
@@ -213,7 +244,7 @@ export default function Visualization({
       target: link.target.id,
     }));
 
-    // Update simulation
+    // Update simulation data
     simulation.nodes(newNodes);
     (simulation.force('link') as d3.ForceLink<SimNode, SimLink>).links(newLinks);
 
@@ -235,10 +266,8 @@ export default function Visualization({
     const nodeSelection = nodeGroup.selectAll<SVGGElement, SimNode>('g.node')
       .data(newNodes, d => d.id);
 
-    // Remove exiting nodes
     nodeSelection.exit().remove();
 
-    // Enter new nodes
     const enter = nodeSelection.enter()
       .append('g')
       .attr('class', 'node')
@@ -271,30 +300,44 @@ export default function Visualization({
       .append('title')
       .text(d => d.path);
 
-    // Cache selections for tick handler
+    // Cache selections
     nodeSelectionRef.current = nodeGroup.selectAll<SVGGElement, SimNode>('g.node');
     linkSelectionRef.current = linkGroup.selectAll<SVGLineElement, SimLink>('line');
 
-    // Set tick handler
-    simulation.on('tick', tickHandler);
+    // Render immediately with current positions
+    renderGraph();
 
-    // Reheat simulation gently
-    simulation.alpha(0.2).restart();
+    // Clear any pending simulation stop
+    if (simStopTimeoutRef.current) {
+      clearTimeout(simStopTimeoutRef.current);
+      simStopTimeoutRef.current = null;
+    }
 
-  }, [fileTree, tickHandler]);
+    // During playback: very brief simulation, then stop
+    // When paused: let simulation run longer
+    const simDuration = isPlaying ? 100 : 500;
+    const alpha = isPlaying ? 0.05 : 0.15;
 
-  // Handle file modifications (highlight animations)
+    simulation.on('tick', renderGraph);
+    simulation.alpha(alpha).restart();
+
+    // Force stop simulation after timeout
+    simStopTimeoutRef.current = window.setTimeout(() => {
+      simulation.stop();
+      renderGraph(); // Final render
+    }, simDuration);
+
+  }, [fileTree, isPlaying, renderGraph]);
+
+  // Handle file modifications (highlight animations) - simplified
   useEffect(() => {
     if (!gRef.current || modifiedFiles.length === 0) return;
 
     const g = gRef.current;
     const nodeMap = nodesRef.current;
-
-    // Track modified positions for author placement
-    const modifiedPositions: { x: number; y: number }[] = [];
-
-    // Batch DOM operations
     const nodeGroup = g.select<SVGGElement>('g.nodes');
+
+    const modifiedPositions: { x: number; y: number }[] = [];
 
     modifiedFiles.forEach(file => {
       const simNode = nodeMap.get(file.id);
@@ -302,7 +345,6 @@ export default function Visualization({
 
       modifiedPositions.push({ x: simNode.x, y: simNode.y });
 
-      // Find the DOM node efficiently
       const nodeEl = nodeGroup.selectAll<SVGGElement, SimNode>('g.node')
         .filter(d => d.id === file.id);
 
@@ -315,16 +357,16 @@ export default function Visualization({
       if (file.status === 'modified') pulseColor = '#eab308';
       if (file.status === 'removed') pulseColor = '#ef4444';
 
-      // Simpler animation
+      // Immediate color change, quick size pulse
       circle
         .attr('fill', pulseColor)
-        .attr('r', originalR * 2)
-        .transition().duration(300)
+        .attr('r', originalR * 1.8)
+        .transition().duration(200)
         .attr('r', originalR)
         .attr('fill', file.status === 'removed' ? '#ef4444' : (file.color || '#8da0cb'));
     });
 
-    // Show ONE author badge per commit
+    // Show author badge
     if (currentCommit && modifiedPositions.length > 0) {
       const author = authors.get(currentCommit.author.email);
       if (author) {
@@ -345,16 +387,6 @@ export default function Visualization({
           background: 'radial-gradient(ellipse at center, #1e293b 0%, #0f172a 100%)',
         }}
       />
-      {currentCommit && (
-        <div className="commit-info">
-          <div className="commit-message">
-            {currentCommit.message.split('\n')[0]}
-          </div>
-          <div className="commit-author">
-            {currentCommit.author.name}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -367,34 +399,34 @@ function showAuthorBadge(
 ) {
   const authorGroup = g.select<SVGGElement>('g.authors');
 
-  // Remove old badges first to prevent accumulation
-  authorGroup.selectAll('.author-badge').filter(function() {
-    const opacity = d3.select(this).style('opacity');
-    return parseFloat(opacity) < 0.5;
-  }).remove();
+  // Limit badge count to prevent accumulation
+  const badges = authorGroup.selectAll('.author-badge');
+  if (badges.size() > 5) {
+    badges.filter((_, i) => i < badges.size() - 5).remove();
+  }
 
   const badge = authorGroup.append('g')
     .attr('class', 'author-badge')
-    .attr('transform', `translate(${x + 25}, ${y - 25})`)
+    .attr('transform', `translate(${x + 20}, ${y - 20})`)
     .style('opacity', 0);
 
   badge.append('circle')
-    .attr('r', 14)
+    .attr('r', 12)
     .attr('fill', author.color)
     .attr('stroke', '#fff')
-    .attr('stroke-width', 2);
+    .attr('stroke-width', 1.5);
 
   badge.append('text')
     .attr('text-anchor', 'middle')
     .attr('dy', 4)
     .attr('fill', '#fff')
-    .attr('font-size', '11px')
+    .attr('font-size', '10px')
     .attr('font-weight', 'bold')
     .text(author.name.charAt(0).toUpperCase());
 
-  badge.transition().duration(150).style('opacity', 1);
+  badge.transition().duration(100).style('opacity', 1);
 
-  badge.transition().delay(800).duration(300)
+  badge.transition().delay(600).duration(200)
     .style('opacity', 0)
     .remove();
 }
