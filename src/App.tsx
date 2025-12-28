@@ -1,7 +1,16 @@
 import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import type { FileNode, Author, Commit, RepoInfo } from './types';
 import { parseRepoUrl, fetchCommitsWithFiles } from './services/git';
-import { createFileTree, applyCommitToTree } from './utils/fileTree';
+import { createFileTree, applyCommitToTree, buildPathLookup } from './utils/fileTree';
+import {
+  savePlaybackState,
+  getPlaybackState,
+  clearPlaybackState,
+  saveTreeSnapshot,
+  getNearestTreeSnapshot,
+  shouldSaveTreeSnapshot,
+  type PlaybackState,
+} from './services/cache';
 import Controls from './components/Controls';
 import RepoInput from './components/RepoInput';
 import { Info, X, PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
@@ -193,13 +202,40 @@ export default function App() {
     };
   }, [isPlaying, playbackSpeed, appState]);
 
-  // Handle seeking
-  const handleSeek = useCallback((targetIndex: number) => {
-    // Reset tree and rebuild up to target index
-    treeRef.current = createFileTree();
-    authorsRef.current = new Map();
+  // Handle seeking - uses cached tree snapshots for faster restoration
+  const handleSeek = useCallback(async (targetIndex: number) => {
+    let startIndex = 0;
 
-    for (let i = 0; i <= targetIndex; i++) {
+    // Try to use a cached tree snapshot if available
+    if (repoInfo && targetIndex > 50) {
+      const cached = await getNearestTreeSnapshot(
+        repoInfo.owner,
+        repoInfo.repo,
+        repoInfo.branch,
+        targetIndex
+      );
+
+      if (cached && cached.snapshot.commitIndex > 0) {
+        // Start from the cached snapshot
+        treeRef.current = cached.fileTree;
+        authorsRef.current = cached.authors;
+        startIndex = cached.snapshot.commitIndex + 1;
+        // Rebuild the path lookup map for memoization
+        buildPathLookup(treeRef.current);
+        console.log(`Restored from snapshot at commit ${cached.snapshot.commitIndex}, applying ${targetIndex - cached.snapshot.commitIndex} more commits`);
+      } else {
+        // No usable snapshot, start from scratch
+        treeRef.current = createFileTree();
+        authorsRef.current = new Map();
+      }
+    } else {
+      // Small seek or no repo info, start from scratch
+      treeRef.current = createFileTree();
+      authorsRef.current = new Map();
+    }
+
+    // Apply remaining commits
+    for (let i = startIndex; i <= targetIndex; i++) {
       applyCommitToTree(treeRef.current, commits[i], authorsRef.current);
     }
 
@@ -207,7 +243,7 @@ export default function App() {
     setAuthors(new Map(authorsRef.current));
     setCurrentCommitIndex(targetIndex);
     setModifiedFiles([]);
-  }, [commits]);
+  }, [commits, repoInfo]);
 
   // Skip controls
   const handleSkipBack = useCallback(() => {
@@ -236,6 +272,8 @@ export default function App() {
     setError(null);
     setShowStats(false);
     setSelectedFile(null);
+    // Clear saved playback state
+    clearPlaybackState();
   }, []);
 
   // Handle file selection - auto-open panel when selecting
@@ -252,22 +290,65 @@ export default function App() {
 
   // Start playback automatically when visualization is ready
   useEffect(() => {
-    if (appState === 'visualizing' && currentCommitIndex === -1 && commits.length > 0) {
+    if (appState === 'visualizing' && currentCommitIndex === -1 && commits.length > 0 && repoInfo) {
       // Small delay before starting
-      const timeout = setTimeout(() => {
-        // Check if URL has a specific commit to jump to
-        const targetIndex = urlParams.at !== undefined ? Math.min(urlParams.at, commits.length - 1) : 0;
+      const timeout = setTimeout(async () => {
+        const repoKey = `${repoInfo.owner}/${repoInfo.repo}/${repoInfo.branch}`;
+
+        // Check if we have saved playback state (from a page refresh)
+        const savedState = getPlaybackState(repoKey);
+
+        // Determine target index: URL param > saved state > 0
+        let targetIndex = 0;
+        let restoreState = false;
+
+        if (urlParams.at !== undefined) {
+          targetIndex = Math.min(urlParams.at, commits.length - 1);
+        } else if (savedState && savedState.commitIndex >= 0 && savedState.commitIndex < commits.length) {
+          targetIndex = savedState.commitIndex;
+          restoreState = true;
+          console.log(`Restoring playback state: commit ${targetIndex}, speed ${savedState.playbackSpeed}x`);
+        }
 
         if (targetIndex > 0) {
-          // Seek to the target commit
-          for (let i = 0; i <= targetIndex; i++) {
+          // Try to use cached tree snapshot for faster restoration
+          const cached = await getNearestTreeSnapshot(
+            repoInfo.owner,
+            repoInfo.repo,
+            repoInfo.branch,
+            targetIndex
+          );
+
+          let startIndex = 0;
+          if (cached && cached.snapshot.commitIndex > 0) {
+            treeRef.current = cached.fileTree;
+            authorsRef.current = cached.authors;
+            startIndex = cached.snapshot.commitIndex + 1;
+            buildPathLookup(treeRef.current);
+            console.log(`Restored from snapshot at commit ${cached.snapshot.commitIndex}`);
+          }
+
+          // Apply remaining commits
+          for (let i = startIndex; i <= targetIndex; i++) {
             applyCommitToTree(treeRef.current, commitsRef.current[i], authorsRef.current);
           }
+
           setFileTree({ ...treeRef.current });
           setAuthors(new Map(authorsRef.current));
           setCurrentCommitIndex(targetIndex);
           setModifiedFiles([]);
-          setIsPlaying(false); // Don't autoplay when seeking to specific commit
+
+          // Restore UI state from saved state
+          if (restoreState && savedState) {
+            setPlaybackSpeed(savedState.playbackSpeed);
+            if (savedState.selectedFile) setSelectedFile(savedState.selectedFile);
+            setShowStats(savedState.showStats);
+            setShowSidebar(savedState.showSidebar);
+            setShowFilePanel(savedState.showFilePanel);
+            setIsPlaying(savedState.isPlaying);
+          } else {
+            setIsPlaying(false); // Don't autoplay when seeking to specific commit
+          }
         } else {
           // Apply first commit
           const commit = commitsRef.current[0];
@@ -284,7 +365,7 @@ export default function App() {
 
       return () => clearTimeout(timeout);
     }
-  }, [appState, currentCommitIndex, commits.length, urlParams.at]);
+  }, [appState, currentCommitIndex, commits.length, urlParams.at, repoInfo]);
 
   // Update URL when state changes
   useEffect(() => {
@@ -300,6 +381,37 @@ export default function App() {
       updateUrlParams({});
     }
   }, [repoInfo, appState, currentCommitIndex, commits.length]);
+
+  // Save playback state to sessionStorage (survives refresh)
+  useEffect(() => {
+    if (repoInfo && appState === 'visualizing' && currentCommitIndex >= 0) {
+      const state: PlaybackState = {
+        repoKey: `${repoInfo.owner}/${repoInfo.repo}/${repoInfo.branch}`,
+        commitIndex: currentCommitIndex,
+        playbackSpeed,
+        selectedFile,
+        isPlaying,
+        showStats,
+        showSidebar,
+        showFilePanel,
+      };
+      savePlaybackState(state);
+    }
+  }, [repoInfo, appState, currentCommitIndex, playbackSpeed, selectedFile, isPlaying, showStats, showSidebar, showFilePanel]);
+
+  // Save tree snapshots at intervals during playback
+  useEffect(() => {
+    if (repoInfo && appState === 'visualizing' && shouldSaveTreeSnapshot(currentCommitIndex)) {
+      saveTreeSnapshot(
+        repoInfo.owner,
+        repoInfo.repo,
+        repoInfo.branch,
+        currentCommitIndex,
+        treeRef.current,
+        authorsRef.current
+      );
+    }
+  }, [repoInfo, appState, currentCommitIndex]);
 
   // Auto-load from URL params on mount
   useEffect(() => {
@@ -399,6 +511,7 @@ export default function App() {
               onFileSelect={handleFileSelect}
               selectedFile={selectedFile}
               hoveredNodePath={hoveredNodePath}
+              repoInfo={repoInfo}
             />
           </Suspense>
         </div>

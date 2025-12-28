@@ -1,5 +1,55 @@
 import type { FileNode, Commit, Author } from '../types';
 
+// ============================================================================
+// MEMOIZATION: Path → Node lookup Map for O(1) access
+// ============================================================================
+
+// Global lookup map maintained across tree operations
+// Key: file path, Value: FileNode reference
+let pathLookupMap: Map<string, FileNode> = new Map();
+
+/**
+ * Get the current path lookup map (for debugging/testing)
+ */
+export function getPathLookupMap(): Map<string, FileNode> {
+  return pathLookupMap;
+}
+
+/**
+ * Reset the path lookup map (used when creating a new tree)
+ */
+export function resetPathLookup(): void {
+  pathLookupMap = new Map();
+}
+
+/**
+ * Build the lookup map from an existing tree (used after deserialization)
+ */
+export function buildPathLookup(root: FileNode): void {
+  pathLookupMap = new Map();
+  const stack: FileNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.path) {
+      pathLookupMap.set(node.path, node);
+    }
+    if (node.children) {
+      stack.push(...node.children);
+    }
+  }
+}
+
+/**
+ * Fast O(1) lookup of a file by path
+ */
+export function findFileByPath(filepath: string): FileNode | null {
+  return pathLookupMap.get(filepath) || null;
+}
+
+// ============================================================================
+// ORIGINAL FUNCTIONS (with memoization integration)
+// ============================================================================
+
 // Generate consistent colors for authors based on their name
 export function generateAuthorColor(name: string): string {
   let hash = 0;
@@ -69,6 +119,8 @@ export function getFileColor(filename: string): string {
 }
 
 export function createFileTree(): FileNode {
+  // Reset the lookup map when creating a new tree
+  resetPathLookup();
   return {
     id: 'root',
     name: 'root',
@@ -104,6 +156,8 @@ export function addFileToTree(root: FileNode, filepath: string): FileNode | null
         color: isFile ? getFileColor(part) : undefined,
       };
       current.children.push(child);
+      // Add to lookup map
+      pathLookupMap.set(currentPath, child);
     }
 
     if (isFile) {
@@ -134,6 +188,9 @@ export function removeFileFromTree(root: FileNode, filepath: string): boolean {
   const index = current.children?.findIndex(c => c.name === fileName) ?? -1;
   if (index === -1) return false;
 
+  // Remove from lookup map
+  pathLookupMap.delete(filepath);
+
   current.children?.splice(index, 1);
 
   // Clean up empty directories
@@ -144,6 +201,8 @@ export function removeFileFromTree(root: FileNode, filepath: string): boolean {
       const idx = grandParent.children?.findIndex(c => c.id === parent.id) ?? -1;
       if (idx !== -1) {
         grandParent.children?.splice(idx, 1);
+        // Also remove empty directory from lookup map
+        pathLookupMap.delete(parent.path);
       }
     }
   }
@@ -152,6 +211,11 @@ export function removeFileFromTree(root: FileNode, filepath: string): boolean {
 }
 
 export function findFileInTree(root: FileNode, filepath: string): FileNode | null {
+  // Try O(1) lookup first
+  const cached = pathLookupMap.get(filepath);
+  if (cached) return cached;
+
+  // Fall back to tree traversal (for cases where lookup map might be out of sync)
   const parts = filepath.split('/');
   let current = root;
 
@@ -159,6 +223,11 @@ export function findFileInTree(root: FileNode, filepath: string): FileNode | nul
     const child = current.children?.find(c => c.name === part);
     if (!child) return null;
     current = child;
+  }
+
+  // Add to lookup map for future access
+  if (current.path) {
+    pathLookupMap.set(current.path, current);
   }
 
   return current;

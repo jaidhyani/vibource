@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { X, FileText, AlertCircle, FileCode, ChevronDown, GitCommit, Folder, ChevronRight, File } from 'lucide-react';
 import type { Commit, FileNode } from '../types';
 import { readFileAtCommit, type FileContent } from '../services/git';
+import { getCachedFileContent, cacheFileContent, pruneFileContentCache } from '../services/cache';
 
 interface FileViewerProps {
   filePath: string | null;
@@ -54,7 +55,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Global cache shared across component instances
+// Global in-memory cache shared across component instances (fast access)
 const fileCache = new Map<string, FileContent>();
 const MAX_CACHE_SIZE = 1024;
 
@@ -65,6 +66,40 @@ function addToCache(key: string, content: FileContent) {
     const keysToDelete = Array.from(fileCache.keys()).slice(0, fileCache.size - MAX_CACHE_SIZE);
     keysToDelete.forEach(k => fileCache.delete(k));
   }
+
+  // Also persist to IndexedDB for cross-session caching
+  // Parse the key to get sha and filepath
+  const colonIdx = key.indexOf(':');
+  if (colonIdx > 0) {
+    const sha = key.slice(0, colonIdx);
+    const filepath = key.slice(colonIdx + 1);
+    cacheFileContent(sha, filepath, content.content, content.size, content.binary, content.truncated);
+  }
+}
+
+// Try to get from in-memory cache, then IndexedDB
+async function getFromCache(sha: string, filepath: string): Promise<FileContent | null> {
+  const key = `${sha}:${filepath}`;
+
+  // Check in-memory cache first (fast)
+  const inMemory = fileCache.get(key);
+  if (inMemory) return inMemory;
+
+  // Check IndexedDB (slower but persistent)
+  const cached = await getCachedFileContent(sha, filepath);
+  if (cached) {
+    const content: FileContent = {
+      content: cached.content,
+      size: cached.size,
+      binary: cached.binary,
+      truncated: cached.truncated,
+    };
+    // Add to in-memory cache for faster future access
+    fileCache.set(key, content);
+    return content;
+  }
+
+  return null;
 }
 
 // Simple diff algorithm - returns lines with their status
@@ -293,24 +328,24 @@ export default function FileViewer({
 
     const cacheKey = `${currentCommit.sha}:${filePath}`;
 
-    // Check cache first
-    const cached = fileCache.get(cacheKey);
-    if (cached) {
-      setFileContent(cached);
-      setError(null);
-    } else {
-      setLoading(true);
-      setError(null);
-    }
+    // Start loading - will check cache async
+    setLoading(true);
+    setError(null);
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
     const loadContent = async () => {
       try {
-        // Load current content
-        if (!cached) {
-          const content = await readFileAtCommit(currentCommit.sha, filePath);
+        // Try cache first (in-memory then IndexedDB)
+        let content = await getFromCache(currentCommit.sha, filePath);
+
+        if (content) {
+          setFileContent(content);
+          setLoading(false);
+        } else {
+          // Load from git
+          content = await readFileAtCommit(currentCommit.sha, filePath);
           if (abortController.signal.aborted) return;
 
           if (content) {
@@ -319,6 +354,7 @@ export default function FileViewer({
           } else {
             setError('File not found at this commit');
           }
+          setLoading(false);
         }
 
         // Load previous version for diff (find the previous commit that touched this file)
@@ -326,12 +362,13 @@ export default function FileViewer({
         if (prevCommitIndex > 0) {
           const prevCommit = fileCommits[prevCommitIndex - 1].commit;
           const prevCacheKey = `${prevCommit.sha}:${filePath}`;
-          const prevCached = fileCache.get(prevCacheKey);
 
-          if (prevCached) {
-            setPreviousContent(prevCached);
+          // Try cache first
+          let prevContent = await getFromCache(prevCommit.sha, filePath);
+          if (prevContent) {
+            setPreviousContent(prevContent);
           } else {
-            const prevContent = await readFileAtCommit(prevCommit.sha, filePath);
+            prevContent = await readFileAtCommit(prevCommit.sha, filePath);
             if (abortController.signal.aborted) return;
             if (prevContent) {
               addToCache(prevCacheKey, prevContent);
@@ -343,8 +380,6 @@ export default function FileViewer({
         } else {
           setPreviousContent(null);
         }
-
-        setLoading(false);
       } catch {
         if (abortController.signal.aborted) return;
         setLoading(false);
@@ -383,13 +418,15 @@ export default function FileViewer({
       for (const commit of prefetchCommits) {
         if (abortController.signal.aborted) break;
 
-        const cacheKey = `${commit.sha}:${filePath}`;
-        if (fileCache.has(cacheKey)) continue;
+        // Check if already cached (in-memory or IndexedDB)
+        const cached = await getFromCache(commit.sha, filePath);
+        if (cached) continue;
 
         try {
           const content = await readFileAtCommit(commit.sha, filePath);
           if (abortController.signal.aborted) break;
           if (content) {
+            const cacheKey = `${commit.sha}:${filePath}`;
             addToCache(cacheKey, content);
           }
         } catch {
@@ -398,6 +435,11 @@ export default function FileViewer({
 
         // Small delay between prefetches to not block main thread
         await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      // Prune old entries from IndexedDB cache periodically
+      if (!abortController.signal.aborted) {
+        pruneFileContentCache();
       }
     };
 
