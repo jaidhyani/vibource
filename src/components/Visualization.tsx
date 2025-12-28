@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
-import type { FileNode, Author, Commit } from '../types';
+import type { FileNode, Author, Commit, RepoInfo } from '../types';
 import { flattenTree, getTreeLinks } from '../utils/fileTree';
+import { saveNodePositions, getNodePositions } from '../services/cache';
 
 interface VisualizationProps {
   fileTree: FileNode;
@@ -12,6 +13,7 @@ interface VisualizationProps {
   onFileSelect?: (path: string) => void;
   selectedFile?: string | null;
   hoveredNodePath?: string | null;
+  repoInfo?: RepoInfo | null;
 }
 
 interface SimNode extends d3.SimulationNodeDatum {
@@ -48,6 +50,7 @@ export default function Visualization({
   onFileSelect,
   selectedFile,
   hoveredNodePath,
+  repoInfo,
 }: VisualizationProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -61,6 +64,8 @@ export default function Visualization({
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const initializedRef = useRef(false);
+  const cachedPositionsRef = useRef<Map<string, { x: number; y: number }> | null>(null);
+  const positionsLoadedRef = useRef(false);
 
   // Cached selections for performance
   const nodeSelectionRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
@@ -173,6 +178,53 @@ export default function Visualization({
       clearTimeout(timeoutId);
     };
   }, []);
+
+  // Load cached node positions on mount
+  useEffect(() => {
+    if (!repoInfo || positionsLoadedRef.current) return;
+
+    const loadPositions = async () => {
+      const cached = await getNodePositions(repoInfo.owner, repoInfo.repo, repoInfo.branch);
+      if (cached) {
+        cachedPositionsRef.current = cached.positions;
+        console.log(`Loaded ${cached.positions.size} cached node positions`);
+      }
+      positionsLoadedRef.current = true;
+    };
+
+    loadPositions();
+  }, [repoInfo]);
+
+  // Save node positions periodically (debounced, when simulation settles)
+  useEffect(() => {
+    if (!repoInfo || !simulationRef.current) return;
+
+    let saveTimeout: number | null = null;
+
+    const handleEnd = () => {
+      // Save positions when simulation settles
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = window.setTimeout(() => {
+        const positions = new Map<string, { x: number; y: number }>();
+        nodesRef.current.forEach((node, id) => {
+          if (node.x !== undefined && node.y !== undefined) {
+            positions.set(id, { x: node.x, y: node.y });
+          }
+        });
+
+        if (positions.size > 0) {
+          saveNodePositions(repoInfo.owner, repoInfo.repo, repoInfo.branch, positions, currentCommitIndex);
+        }
+      }, 1000); // Wait 1s after simulation ends
+    };
+
+    simulationRef.current.on('end', handleEnd);
+
+    return () => {
+      if (saveTimeout) clearTimeout(saveTimeout);
+      simulationRef.current?.on('end', null);
+    };
+  }, [repoInfo, currentCommitIndex]);
 
   // Initialize SVG once
   useEffect(() => {
@@ -301,7 +353,8 @@ export default function Visualization({
     };
     calcDepth(fileTree, 0);
 
-    // Build new nodes, positioning new nodes near their parent
+    // Build new nodes, positioning new nodes near their parent or using cached positions
+    const cachedPositions = cachedPositionsRef.current;
     const newNodes: SimNode[] = allNodes.map(node => {
       const existing = existingNodes.get(node.id);
       if (existing) {
@@ -313,14 +366,20 @@ export default function Visualization({
         return existing;
       }
 
-      // New node - position near parent
+      // New node - check for cached position first
       const parentId = parentMap.get(node.id);
       const parent = parentId ? existingNodes.get(parentId) : null;
       const depth = depthMap.get(node.id) || 0;
 
-      // Position based on parent or radial layout
+      // Try cached position first (for faster restoration after refresh)
+      const cached = cachedPositions?.get(node.id);
       let x: number, y: number;
-      if (parent && parent.x !== undefined && parent.y !== undefined) {
+
+      if (cached) {
+        // Use cached position
+        x = cached.x;
+        y = cached.y;
+      } else if (parent && parent.x !== undefined && parent.y !== undefined) {
         // Position near parent with slight randomness
         const angle = Math.random() * Math.PI * 2;
         const dist = 20 + Math.random() * 15;
