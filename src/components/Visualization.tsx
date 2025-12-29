@@ -353,6 +353,13 @@ export default function Visualization({
     };
     calcDepth(fileTree, 0);
 
+    // Track structural changes - calculate before modifying anything
+    const currentNodeIds = new Set(allNodes.map(n => n.id));
+    const existingNodeIds = new Set(existingNodes.keys());
+    const addedNodeIds = new Set([...currentNodeIds].filter(id => !existingNodeIds.has(id)));
+    const removedNodeIds = new Set([...existingNodeIds].filter(id => !currentNodeIds.has(id)));
+    const hasStructuralChanges = addedNodeIds.size > 0 || removedNodeIds.size > 0;
+
     // Build new nodes, positioning new nodes near their parent or using cached positions
     const cachedPositions = cachedPositionsRef.current;
     const newNodes: SimNode[] = allNodes.map(node => {
@@ -417,9 +424,12 @@ export default function Visualization({
       target: link.target.id,
     }));
 
-    // Update simulation data
-    simulation.nodes(newNodes);
-    (simulation.force('link') as d3.ForceLink<SimNode, SimLink>).links(newLinks);
+    // Only update simulation data when structure changed
+    // This avoids reinitializing forces (especially forceCenter) which causes oscillation
+    if (hasStructuralChanges) {
+      simulation.nodes(newNodes);
+      (simulation.force('link') as d3.ForceLink<SimNode, SimLink>).links(newLinks);
+    }
 
     // Update DOM - Links
     const linkGroup = g.select<SVGGElement>('g.links');
@@ -548,21 +558,17 @@ export default function Visualization({
     // Render immediately with current positions
     renderGraph(true);
 
-    // Determine how much to reheat the simulation based on changes
-    const newNodeCount = newNodes.filter(n => !existingNodes.has(n.id)).length;
-    const removedNodeCount = existingNodes.size - (newNodes.length - newNodeCount);
-    const totalChanges = newNodeCount + Math.max(0, removedNodeCount);
-
-    // Always restart simulation when tree changes to ensure graph updates
-    // Scale alpha based on magnitude of changes
-    const baseAlpha = 0.1; // Minimum alpha to ensure visible settling
-    const perChangeAlpha = 0.005;
-    const maxAlpha = 0.5;
-    const targetAlpha = Math.min(maxAlpha, baseAlpha + totalChanges * perChangeAlpha);
-
-    // Force restart with calculated alpha - don't skip even if "no changes"
-    // because the tree structure might have changed in ways we didn't detect
-    simulation.alpha(targetAlpha).restart();
+    // Only reheat simulation if nodes were actually added or removed
+    // Reheating when nothing changed causes oscillation due to center/radial forces
+    if (hasStructuralChanges) {
+      const totalChanges = addedNodeIds.size + removedNodeIds.size;
+      // Scale alpha based on magnitude of changes
+      const baseAlpha = 0.1;
+      const perChangeAlpha = 0.005;
+      const maxAlpha = 0.5;
+      const targetAlpha = Math.min(maxAlpha, baseAlpha + totalChanges * perChangeAlpha);
+      simulation.alpha(targetAlpha).restart();
+    }
 
   }, [fileTree, renderGraph, onFileSelect]);
 
@@ -661,6 +667,9 @@ export default function Visualization({
         const avgX = modifiedPositions.reduce((sum, p) => sum + p.x, 0) / modifiedPositions.length;
         const avgY = modifiedPositions.reduce((sum, p) => sum + p.y, 0) / modifiedPositions.length;
 
+        // Track if this is a new author before we add them
+        const wasNewAuthor = !authorNode;
+
         if (!authorNode) {
           // Create new author node - start near the modified files
           authorNode = {
@@ -698,13 +707,21 @@ export default function Visualization({
         });
         toRemove.forEach(id => authorNodes.delete(id));
 
-        // Get all file/dir nodes and active author nodes
-        const fileNodes = Array.from(nodeMap.values());
-        const activeAuthorNodes = Array.from(authorNodes.values());
-        const allNodes = [...fileNodes, ...activeAuthorNodes];
+        // Only update simulation nodes if the node set actually changed
+        // (author added or removed) - don't re-add all nodes on every commit
+        const nodeSetChanged = wasNewAuthor || toRemove.length > 0;
 
-        // Update simulation with all nodes (including authors)
-        simulation.nodes(allNodes);
+        // Get active author nodes for DOM updates
+        const activeAuthorNodes = Array.from(authorNodes.values());
+
+        if (nodeSetChanged) {
+          // Get all file/dir nodes and active author nodes
+          const fileNodes = Array.from(nodeMap.values());
+          const allNodes = [...fileNodes, ...activeAuthorNodes];
+
+          // Update simulation with all nodes (including authors)
+          simulation.nodes(allNodes);
+        }
 
         // Update DOM - Author nodes
         const authorSelection = authorGroup.selectAll<SVGGElement, SimNode>('g.author-node')
@@ -823,8 +840,11 @@ export default function Visualization({
         // Cache author link selection for tick updates (persists until next commit)
         authorLinkSelectionRef.current = authorLinkGroup.selectAll<SVGLineElement, SimLink>('line.author-link');
 
-        // Reheat simulation gently
-        simulation.alpha(0.15).restart();
+        // Only reheat simulation if node set changed (author added/removed)
+        // Don't reheat on every commit - this was causing oscillation
+        if (nodeSetChanged) {
+          simulation.alpha(0.08).restart();
+        }
       }
     }
   }, [modifiedFiles, authors, currentCommit, currentCommitIndex]);
