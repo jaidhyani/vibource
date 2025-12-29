@@ -548,21 +548,20 @@ export default function Visualization({
     // Render immediately with current positions
     renderGraph(true);
 
-    // Determine how much to reheat the simulation based on changes
+    // Only reheat simulation if nodes were actually added or removed
+    // Reheating when nothing changed causes oscillation due to center/radial forces
     const newNodeCount = newNodes.filter(n => !existingNodes.has(n.id)).length;
     const removedNodeCount = existingNodes.size - (newNodes.length - newNodeCount);
     const totalChanges = newNodeCount + Math.max(0, removedNodeCount);
 
-    // Always restart simulation when tree changes to ensure graph updates
-    // Scale alpha based on magnitude of changes
-    const baseAlpha = 0.1; // Minimum alpha to ensure visible settling
-    const perChangeAlpha = 0.005;
-    const maxAlpha = 0.5;
-    const targetAlpha = Math.min(maxAlpha, baseAlpha + totalChanges * perChangeAlpha);
-
-    // Force restart with calculated alpha - don't skip even if "no changes"
-    // because the tree structure might have changed in ways we didn't detect
-    simulation.alpha(targetAlpha).restart();
+    if (totalChanges > 0) {
+      // Scale alpha based on magnitude of changes
+      const baseAlpha = 0.1;
+      const perChangeAlpha = 0.005;
+      const maxAlpha = 0.5;
+      const targetAlpha = Math.min(maxAlpha, baseAlpha + totalChanges * perChangeAlpha);
+      simulation.alpha(targetAlpha).restart();
+    }
 
   }, [fileTree, renderGraph, onFileSelect]);
 
