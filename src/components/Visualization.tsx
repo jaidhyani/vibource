@@ -263,10 +263,10 @@ export default function Visualization({
       const force = (alpha: number) => {
         for (const node of nodes) {
           if (node.type === 'author' && node.targetX !== undefined && node.targetY !== undefined) {
-            // Very gentle attraction to target position
+            // Moderate attraction to target position on periphery
             const dx = node.targetX - (node.x || 0);
             const dy = node.targetY - (node.y || 0);
-            const strength = 0.02 * alpha; // Gentle pull
+            const strength = 0.04 * alpha; // Moderate pull to keep near their file regions
             node.vx = (node.vx || 0) + dx * strength;
             node.vy = (node.vy || 0) + dy * strength;
             // Apply extra damping to author velocity for smooth motion
@@ -284,20 +284,21 @@ export default function Visualization({
     const simulation = d3.forceSimulation<SimNode>([])
       .force('link', d3.forceLink<SimNode, SimLink>([]).id(d => d.id).distance(30).strength(0.4))
       .force('charge', d3.forceManyBody<SimNode>().strength(d => {
-        if (d.type === 'author') return -30; // Authors repel less
+        if (d.type === 'author') return -150; // Authors repel strongly to spread on periphery
         if (d.type === 'directory') return -80;
         return -15;
-      }).distanceMax(200))
+      }).distanceMax(400)) // Larger range for author repulsion
       .force('center', d3.forceCenter(0, 0).strength(0.02))
       .force('collision', d3.forceCollide<SimNode>().radius(d => {
-        if (d.type === 'author') return 18; // Author collision radius (slightly smaller to yield)
-        if (d.type === 'directory') return 14;
-        return 6;
-      }).iterations(2).strength(0.7)) // Moderate collision strength
+        // Larger radii to account for labels and reduce overlap
+        if (d.type === 'author') return 45; // Author + label below (~30px label height)
+        if (d.type === 'directory') return 50; // Directory + label to the right (~80px label width)
+        return 8; // Slightly larger for files
+      }).iterations(3).strength(0.8)) // Stronger collision with more iterations
       .force('radial', d3.forceRadial<SimNode>(d => {
-        if (d.type === 'author') return 0; // Authors don't follow radial
+        if (d.type === 'author') return 350; // Authors pushed to outer ring
         return d.depth * 60;
-      }, 0, 0).strength(d => d.type === 'author' ? 0 : 0.1))
+      }, 0, 0).strength(d => d.type === 'author' ? 0.15 : 0.1)) // Authors have moderate radial pull
       .force('authorPosition', authorPositionForce())
       .velocityDecay(0.35) // Smooth motion - lower = more momentum
       .alphaDecay(0.02) // Slow cooling - allows full settling
@@ -667,11 +668,19 @@ export default function Visualization({
         const avgX = modifiedPositions.reduce((sum, p) => sum + p.x, 0) / modifiedPositions.length;
         const avgY = modifiedPositions.reduce((sum, p) => sum + p.y, 0) / modifiedPositions.length;
 
+        // Project author position to the periphery in the direction of their files
+        // This keeps authors away from the bulk of the graph while still being near their files
+        const distFromCenter = Math.sqrt(avgX * avgX + avgY * avgY);
+        const targetRadius = 350; // Match the radial force radius
+        const scale = distFromCenter > 10 ? targetRadius / distFromCenter : 1;
+        const peripheryX = avgX * scale;
+        const peripheryY = avgY * scale;
+
         // Track if this is a new author before we add them
         const wasNewAuthor = !authorNode;
 
         if (!authorNode) {
-          // Create new author node - start near the modified files
+          // Create new author node - start at periphery in direction of modified files
           authorNode = {
             id: authorId,
             name: authorData.name,
@@ -681,19 +690,19 @@ export default function Visualization({
             depth: 0,
             email: authorData.email,
             lastActiveIndex: currentCommitIndex,
-            targetX: avgX,
-            targetY: avgY,
-            x: avgX + (Math.random() - 0.5) * 50,
-            y: avgY + (Math.random() - 0.5) * 50,
+            targetX: peripheryX,
+            targetY: peripheryY,
+            x: peripheryX + (Math.random() - 0.5) * 50,
+            y: peripheryY + (Math.random() - 0.5) * 50,
             vx: 0,
             vy: 0,
           };
           authorNodes.set(authorId, authorNode);
         } else {
-          // Update existing author
+          // Update existing author - move target to periphery in direction of new files
           authorNode.lastActiveIndex = currentCommitIndex;
-          authorNode.targetX = avgX;
-          authorNode.targetY = avgY;
+          authorNode.targetX = peripheryX;
+          authorNode.targetY = peripheryY;
           authorNode.color = authorData.color;
         }
 
