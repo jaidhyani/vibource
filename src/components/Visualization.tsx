@@ -353,6 +353,13 @@ export default function Visualization({
     };
     calcDepth(fileTree, 0);
 
+    // Track structural changes - calculate before modifying anything
+    const currentNodeIds = new Set(allNodes.map(n => n.id));
+    const existingNodeIds = new Set(existingNodes.keys());
+    const addedNodeIds = new Set([...currentNodeIds].filter(id => !existingNodeIds.has(id)));
+    const removedNodeIds = new Set([...existingNodeIds].filter(id => !currentNodeIds.has(id)));
+    const hasStructuralChanges = addedNodeIds.size > 0 || removedNodeIds.size > 0;
+
     // Build new nodes, positioning new nodes near their parent or using cached positions
     const cachedPositions = cachedPositionsRef.current;
     const newNodes: SimNode[] = allNodes.map(node => {
@@ -417,9 +424,12 @@ export default function Visualization({
       target: link.target.id,
     }));
 
-    // Update simulation data
-    simulation.nodes(newNodes);
-    (simulation.force('link') as d3.ForceLink<SimNode, SimLink>).links(newLinks);
+    // Only update simulation data when structure changed
+    // This avoids reinitializing forces (especially forceCenter) which causes oscillation
+    if (hasStructuralChanges) {
+      simulation.nodes(newNodes);
+      (simulation.force('link') as d3.ForceLink<SimNode, SimLink>).links(newLinks);
+    }
 
     // Update DOM - Links
     const linkGroup = g.select<SVGGElement>('g.links');
@@ -550,11 +560,8 @@ export default function Visualization({
 
     // Only reheat simulation if nodes were actually added or removed
     // Reheating when nothing changed causes oscillation due to center/radial forces
-    const newNodeCount = newNodes.filter(n => !existingNodes.has(n.id)).length;
-    const removedNodeCount = existingNodes.size - (newNodes.length - newNodeCount);
-    const totalChanges = newNodeCount + Math.max(0, removedNodeCount);
-
-    if (totalChanges > 0) {
+    if (hasStructuralChanges) {
+      const totalChanges = addedNodeIds.size + removedNodeIds.size;
       // Scale alpha based on magnitude of changes
       const baseAlpha = 0.1;
       const perChangeAlpha = 0.005;
