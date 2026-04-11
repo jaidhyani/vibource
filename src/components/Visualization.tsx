@@ -178,11 +178,11 @@ export default function Visualization({
         // Tab hidden - stop simulation
         simulationRef.current?.stop();
       } else {
-        // Tab visible - clean up stale elements and restart simulation
+        // Tab visible - restart simulation
         if (gRef.current) {
-          // Remove transient author links (they may be in weird states)
-          gRef.current.select('g.author-links').selectAll('*').remove();
-          // Restart simulation to let it settle
+          // Don't clear author links on resume: the tick handler rewrites their
+          // coordinates every frame from nodesRef, so whatever stale state is on
+          // them is about to be overwritten.
           if (simulationRef.current) {
             simulationRef.current.alpha(0.1).restart();
           }
