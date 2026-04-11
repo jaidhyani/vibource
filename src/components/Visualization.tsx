@@ -91,11 +91,26 @@ export default function Visualization({
     const authorLinkSelection = authorLinkSelectionRef.current;
 
     if (linkSelection) {
-      linkSelection
-        .attr('x1', d => (d.source as SimNode).x!)
-        .attr('y1', d => (d.source as SimNode).y!)
-        .attr('x2', d => (d.target as SimNode).x!)
-        .attr('y2', d => (d.target as SimNode).y!);
+      const nodeMap = nodesRef.current;
+      linkSelection.each(function(d) {
+        // Source/target should be SimNode refs, but fall back to the node map
+        // for string IDs so a missing ref can never write `x1="undefined"`.
+        const source = typeof d.source === 'string' ? nodeMap.get(d.source) : (d.source as SimNode);
+        const target = typeof d.target === 'string' ? nodeMap.get(d.target) : (d.target as SimNode);
+        const line = d3.select(this);
+        if (!source || !target ||
+            source.x === undefined || source.y === undefined ||
+            target.x === undefined || target.y === undefined) {
+          line.attr('visibility', 'hidden');
+          return;
+        }
+        line
+          .attr('visibility', 'visible')
+          .attr('x1', source.x)
+          .attr('y1', source.y)
+          .attr('x2', target.x)
+          .attr('y2', target.y);
+      });
     }
 
     if (nodeSelection) {
@@ -418,10 +433,16 @@ export default function Visualization({
     // Update node map
     nodesRef.current = new Map(newNodes.map(n => [n.id, n]));
 
-    // Build links
+    // Build links with SimNode references (not string IDs) so that the DOM-bound
+    // datum stays valid for renderGraph (which reads d.source.x / d.target.x).
+    // Previously these were strings and got silently mutated to SimNode refs by
+    // d3.forceLink.links() — but only when we called it (i.e. on structural changes).
+    // On non-structural commits that path was skipped, leaving the DOM bound to
+    // strings → renderGraph wrote `x1="undefined"` and tree links disappeared.
+    const linkNodeMap = nodesRef.current;
     const newLinks: SimLink[] = links.map(link => ({
-      source: link.source.id,
-      target: link.target.id,
+      source: linkNodeMap.get(link.source.id) ?? link.source.id,
+      target: linkNodeMap.get(link.target.id) ?? link.target.id,
     }));
 
     // Only update simulation data when structure changed
