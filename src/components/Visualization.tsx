@@ -31,11 +31,25 @@ interface SimNode extends d3.SimulationNodeDatum {
   targetY?: number;
 }
 
-interface SimLink extends d3.SimulationLinkDatum<SimNode> {
+// Tree links (dir→child). Always hold resolved SimNode refs because the
+// simulation's forceLink.links() mutates its input array to replace string
+// ids with refs — PR #25 had the bug that this happened only on structural
+// commits. Making the type ref-only means the DOM binding cannot hold
+// strings in the first place, so the invariant is compile-enforced.
+interface TreeLink extends d3.SimulationLinkDatum<SimNode> {
+  source: SimNode;
+  target: SimNode;
+}
+
+// Author links are DOM-only overlays rendered between an author node and
+// the files they touched in the current commit. They carry string ids
+// because endpoints are looked up dynamically in the tick handler against
+// two node maps (file nodes + author nodes). They are never fed to the
+// simulation's forceLink.
+interface AuthorLink extends d3.SimulationLinkDatum<SimNode> {
   source: SimNode | string;
   target: SimNode | string;
-  isAuthorLink?: boolean;
-  changeSize?: number; // For author links: additions + deletions
+  changeSize: number;
 }
 
 // Number of commits of inactivity before removing an author
@@ -58,7 +72,7 @@ export default function Visualization({
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   // Persistent refs for D3 elements
-  const simulationRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
+  const simulationRef = useRef<d3.Simulation<SimNode, TreeLink> | null>(null);
   const nodesRef = useRef<Map<string, SimNode>>(new Map());
   const authorNodesRef = useRef<Map<string, SimNode>>(new Map());
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
@@ -69,9 +83,9 @@ export default function Visualization({
 
   // Cached selections for performance
   const nodeSelectionRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
-  const linkSelectionRef = useRef<d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null>(null);
+  const linkSelectionRef = useRef<d3.Selection<SVGLineElement, TreeLink, SVGGElement, unknown> | null>(null);
   const authorSelectionRef = useRef<d3.Selection<SVGGElement, SimNode, SVGGElement, unknown> | null>(null);
-  const authorLinkSelectionRef = useRef<d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null>(null);
+  const authorLinkSelectionRef = useRef<d3.Selection<SVGLineElement, AuthorLink, SVGGElement, unknown> | null>(null);
 
   // Throttle tick handler to ~30fps for performance
   const lastTickRef = useRef(0);
@@ -80,10 +94,13 @@ export default function Visualization({
   // Render function - updates DOM (throttled when called from simulation tick)
   const renderGraph = useCallback((forceRender = false) => {
     const now = performance.now();
-    if (!forceRender && now - lastTickRef.current < TICK_INTERVAL) {
-      return; // Skip this frame
+    if (!forceRender) {
+      // Throttle to 30fps: skip if we're inside the previous tick window.
+      // Forced renders bypass the throttle AND don't consume the budget,
+      // so a forced render followed by a natural tick still renders.
+      if (now - lastTickRef.current < TICK_INTERVAL) return;
+      lastTickRef.current = now;
     }
-    lastTickRef.current = now;
 
     const nodeSelection = nodeSelectionRef.current;
     const linkSelection = linkSelectionRef.current;
@@ -93,10 +110,14 @@ export default function Visualization({
     if (linkSelection) {
       const nodeMap = nodesRef.current;
       linkSelection.each(function(d) {
-        // Source/target should be SimNode refs, but fall back to the node map
-        // for string IDs so a missing ref can never write `x1="undefined"`.
-        const source = typeof d.source === 'string' ? nodeMap.get(d.source) : (d.source as SimNode);
-        const target = typeof d.target === 'string' ? nodeMap.get(d.target) : (d.target as SimNode);
+        // Runtime guard retained even though the type forbids strings, so a
+        // future refactor that re-introduces string ids can't silently regress.
+        const source = typeof (d.source as SimNode | string) === 'string'
+          ? nodeMap.get(d.source as unknown as string)
+          : (d.source as SimNode);
+        const target = typeof (d.target as SimNode | string) === 'string'
+          ? nodeMap.get(d.target as unknown as string)
+          : (d.target as SimNode);
         const line = d3.select(this);
         if (!source || !target ||
             source.x === undefined || source.y === undefined ||
@@ -157,11 +178,11 @@ export default function Visualization({
         // Tab hidden - stop simulation
         simulationRef.current?.stop();
       } else {
-        // Tab visible - clean up stale elements and restart simulation
+        // Tab visible - restart simulation
         if (gRef.current) {
-          // Remove transient author links (they may be in weird states)
-          gRef.current.select('g.author-links').selectAll('*').remove();
-          // Restart simulation to let it settle
+          // Don't clear author links on resume: the tick handler rewrites their
+          // coordinates every frame from nodesRef, so whatever stale state is on
+          // them is about to be overwritten.
           if (simulationRef.current) {
             simulationRef.current.alpha(0.1).restart();
           }
@@ -297,7 +318,7 @@ export default function Visualization({
 
     // Create simulation with smooth settling - runs continuously until naturally stable
     const simulation = d3.forceSimulation<SimNode>([])
-      .force('link', d3.forceLink<SimNode, SimLink>([]).id(d => d.id).distance(30).strength(0.4))
+      .force('link', d3.forceLink<SimNode, TreeLink>([]).id(d => d.id).distance(30).strength(0.4))
       .force('charge', d3.forceManyBody<SimNode>().strength(d => {
         if (d.type === 'author') return -30; // Authors repel less
         if (d.type === 'directory') return -80;
@@ -327,7 +348,11 @@ export default function Visualization({
     return () => {
       simulation.stop();
     };
-  }, [dimensions]);
+    // Init runs exactly once. Dimensions are applied by the separate
+    // "Recenter view" effect below — depending on them here would tear
+    // down the simulation on first resize without re-creating it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Recenter view when dimensions change (but only after initial setup)
   useEffect(() => {
@@ -440,22 +465,27 @@ export default function Visualization({
     // On non-structural commits that path was skipped, leaving the DOM bound to
     // strings → renderGraph wrote `x1="undefined"` and tree links disappeared.
     const linkNodeMap = nodesRef.current;
-    const newLinks: SimLink[] = links.map(link => ({
-      source: linkNodeMap.get(link.source.id) ?? link.source.id,
-      target: linkNodeMap.get(link.target.id) ?? link.target.id,
-    }));
+    // TreeLink requires resolved SimNode refs — if a node is missing here,
+    // the tree is internally inconsistent, so drop the link rather than
+    // fabricate a half-valid one.
+    const newLinks: TreeLink[] = links.flatMap(link => {
+      const source = linkNodeMap.get(link.source.id);
+      const target = linkNodeMap.get(link.target.id);
+      if (!source || !target) return [];
+      return [{ source, target }];
+    });
 
     // Only update simulation data when structure changed
     // This avoids reinitializing forces (especially forceCenter) which causes oscillation
     if (hasStructuralChanges) {
       simulation.nodes(newNodes);
-      (simulation.force('link') as d3.ForceLink<SimNode, SimLink>).links(newLinks);
+      (simulation.force('link') as d3.ForceLink<SimNode, TreeLink>).links(newLinks);
     }
 
     // Update DOM - Links
     const linkGroup = g.select<SVGGElement>('g.links');
-    const linkSelection = linkGroup.selectAll<SVGLineElement, SimLink>('line')
-      .data(newLinks, d => `${(d.source as SimNode).id || d.source}-${(d.target as SimNode).id || d.target}`);
+    const linkSelection = linkGroup.selectAll<SVGLineElement, TreeLink>('line')
+      .data(newLinks, d => `${d.source.id}-${d.target.id}`);
 
     linkSelection.exit().remove();
 
@@ -574,7 +604,7 @@ export default function Visualization({
 
     // Cache selections
     nodeSelectionRef.current = nodeGroup.selectAll<SVGGElement, SimNode>('g.node');
-    linkSelectionRef.current = linkGroup.selectAll<SVGLineElement, SimLink>('line');
+    linkSelectionRef.current = linkGroup.selectAll<SVGLineElement, TreeLink>('line');
 
     // Render immediately with current positions
     renderGraph(true);
@@ -804,10 +834,9 @@ export default function Visualization({
         const maxChangeSize = Math.max(...modifiedPositions.map(p => p.changeSize), 1);
 
         // Draw persistent glowing edges from author to modified files
-        const authorLinks: SimLink[] = modifiedPositions.map(pos => ({
+        const authorLinks: AuthorLink[] = modifiedPositions.map(pos => ({
           source: authorId,
           target: pos.id,
-          isAuthorLink: true,
           changeSize: pos.changeSize,
         }));
 
@@ -827,8 +856,8 @@ export default function Visualization({
           return `drop-shadow(0 0 ${blur}px ${linkColor})`;
         };
 
-        const linkSelection = authorLinkGroup.selectAll<SVGLineElement, SimLink>('line.author-link')
-          .data(authorLinks, d => `${d.source}-${d.target}`);
+        const linkSelection = authorLinkGroup.selectAll<SVGLineElement, AuthorLink>('line.author-link')
+          .data(authorLinks, d => `${d.source as string}-${d.target as string}`);
 
         linkSelection.exit().remove();
 
@@ -859,7 +888,7 @@ export default function Visualization({
           .attr('stroke-opacity', 0.35);
 
         // Cache author link selection for tick updates (persists until next commit)
-        authorLinkSelectionRef.current = authorLinkGroup.selectAll<SVGLineElement, SimLink>('line.author-link');
+        authorLinkSelectionRef.current = authorLinkGroup.selectAll<SVGLineElement, AuthorLink>('line.author-link');
 
         // Only reheat simulation if node set changed (author added/removed)
         // Don't reheat on every commit - this was causing oscillation
