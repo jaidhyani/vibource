@@ -94,10 +94,13 @@ export default function Visualization({
   // Render function - updates DOM (throttled when called from simulation tick)
   const renderGraph = useCallback((forceRender = false) => {
     const now = performance.now();
-    if (!forceRender && now - lastTickRef.current < TICK_INTERVAL) {
-      return; // Skip this frame
+    if (!forceRender) {
+      // Throttle to 30fps: skip if we're inside the previous tick window.
+      // Forced renders bypass the throttle AND don't consume the budget,
+      // so a forced render followed by a natural tick still renders.
+      if (now - lastTickRef.current < TICK_INTERVAL) return;
+      lastTickRef.current = now;
     }
-    lastTickRef.current = now;
 
     const nodeSelection = nodeSelectionRef.current;
     const linkSelection = linkSelectionRef.current;
