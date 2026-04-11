@@ -348,7 +348,11 @@ export default function Visualization({
     return () => {
       simulation.stop();
     };
-  }, [dimensions]);
+    // Init runs exactly once. Dimensions are applied by the separate
+    // "Recenter view" effect below — depending on them here would tear
+    // down the simulation on first resize without re-creating it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Recenter view when dimensions change (but only after initial setup)
   useEffect(() => {
